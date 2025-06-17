@@ -21,7 +21,6 @@ def init_db():
         super_user = User(
             username='super',
             role=RoleEnum.SUPER,
-            full_name='Super Administrator'
         )
         # 设置一个默认密码，实际项目中应更安全地处理
         super_user.set_password('123456')
@@ -33,5 +32,5 @@ def init_db():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=6543, debug=True)
+    app.run(host='0.0.0.0', port=3456)
 
