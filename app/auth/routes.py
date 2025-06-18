@@ -3,11 +3,13 @@ from flask import request, jsonify, session
 from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
+from ..decorators import log_activity
 from ..models import User, RoleEnum
 from .. import db, bcrypt
 
 
 @auth_bp.route('/register', methods=['POST'])
+@log_activity('注册')
 def register():
     """
     用户注册API端点。
@@ -32,7 +34,7 @@ def register():
 
     # 4. 检查用户名是否已存在
     if User.query.filter_by(username=username).first():
-        return jsonify({"error": "该用户名已被使用"}), 409  # 409 Conflict
+        return jsonify({"error": "该用户名已被使用"}), 409  #409 冲突
 
     # 5. 创建并保存新用户
     try:
@@ -65,12 +67,14 @@ def login():
     """
     用户登录API端点。
     验证用户凭据并创建会话。
+    如果用户已登录，会先将其登出。
     """
+    # 如果一个已登录用户尝试再次登录，先将他登出
+    if current_user.is_authenticated:
+        logout_user()
+
     if not request.is_json:
         return jsonify({"error": "请求必须是JSON格式"}), 415
-
-    if current_user.is_authenticated:
-        return jsonify({"message": "用户已登录"}), 200
 
     data = request.get_json()
     username = data.get('username')
@@ -83,35 +87,36 @@ def login():
 
     # 验证用户存在且密码正确
     if user and user.check_password(password):
-        # 在 login_user 之前，将会话标记为“永久”
         session.permanent = True
-        # 使用 flask-login 创建会话 (基于Cookie)
-        # login_user(user, remember=True)  # remember=True 保持会话持久
-        login_user(user)
+        login_user(user) # 不使用 remember=True 来确保会话过期功能正常
         return jsonify({
             "message": "登录成功",
             "user": {
                 "id": user.id,
                 "username": user.username,
                 "email": user.email,
-                "role": user.role.name  # 返回角色名称
+                "role": user.role.name
             }
         }), 200
     else:
-        return jsonify({"error": "用户名或密码无效"}), 401  # 401 Unauthorized
+        # 凭证无效，返回 401 Unauthorized
+        return jsonify({"error": "用户名或密码无效"}), 401
 
 
 @auth_bp.route('/logout', methods=['POST'])
-@login_required  # 确保只有登录的用户才能登出
+@login_required
+@log_activity('退出系统', action_detail_template='用户 {current_user.username} 登出系统')
 def logout():
     """
     用户登出API端点。
     """
+    # 在修饰器执行前，current_user是有效的。
+    # 修饰器会在 logout_user() 执行前捕获它。
     logout_user()
     return jsonify({"message": "登出成功"}), 200
 
-
 @auth_bp.route('/status', methods=['GET'])
+@log_activity('检查登录状态', action_detail_template='用户 {current_user.username} 检查登录状态')
 def status():
     """
     检查当前用户的登录状态。

@@ -65,86 +65,66 @@ def role_required(role):
 def log_activity(action_type, action_detail_template=None):
     """
     一个作为修饰器的函数，用于在路由执行后自动记录用户活动。
-
-    用法:
-    @app.route('/some_route/<int:item_id>')
-    @log_activity('VIEW_ITEM', action_detail_template='User viewed item with id {item_id}')
-    def some_view_function(item_id):
-        # ... 路由处理逻辑
-        pass
-
-    :param action_type: str, 必需, 动作的类型 (e.g., 'LOGIN_SUCCESS', 'CREATE_PROJECT').
-    :param action_detail_template: str, 可选, 动作描述的模板.
-                                  可以使用路由中的变量，如 '{item_id}'.
     """
-
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            # 首先，执行原始的路由函数来获取其响应
+            # 为登出操作预先捕获用户信息
+            user_before_logout = None
+            if request.endpoint == 'auth.logout' and current_user.is_authenticated:
+                user_before_logout = current_user._get_current_object()
+
             try:
                 response = f(*args, **kwargs)
-                # 从响应中提取 status_code
                 if isinstance(response, tuple):
                     status_code = response[1]
-                elif hasattr(response, 'status_code'):
-                    status_code = response.status_code
                 else:
-                    # 如果返回的不是标准响应对象，默认为 200 OK
-                    status_code = 200
+                    status_code = getattr(response, 'status_code', 200)
             except Exception as e:
-                # 如果路由函数本身抛出异常，我们也应该记录
-                status_code = 500  # 内部服务器错误
-                # 在重新抛出异常前记录日志
-                _log_db(action_type, action_detail_template, status_code, kwargs)
-                # 重新抛出异常，让Flask的错误处理器接管
+                status_code = 500
+                _log_db(action_type, action_detail_template, status_code, kwargs, user=user_before_logout)
                 raise e
 
-            # 正常执行后记录日志
-            _log_db(action_type, action_detail_template, status_code, kwargs)
+            _log_db(action_type, action_detail_template, status_code, kwargs, user=user_before_logout)
 
             return response
-
         return decorated_function
-
     return decorator
 
+def _log_db(action_type, action_detail_template, status_code, route_kwargs, user=None):
+    """
+    内部辅助函数，执行实际的数据库写入操作。
+    :param user: 可选参数，用于在用户登出后记录其信息。
+    """
+    # 如果没有显式传递user，就使用current_user
+    log_user = user or current_user
 
-def _log_db(action_type, action_detail_template, status_code, route_kwargs):
-    """
-    内部辅助函数，执行实际的数据库写入操作，以避免代码重复。
-    """
     # 只有认证通过的用户才记录活动
-    if not current_user.is_authenticated:
+    if not log_user or not log_user.is_authenticated:
         return
 
     action_detail = None
     if action_detail_template:
         try:
-            # 使用路由的关键字参数 (e.g., user_id) 格式化描述
-            action_detail = action_detail_template.format(**route_kwargs)
-        except KeyError:
-            # 如果模板中的变量在路由参数中找不到，就直接使用模板字符串
+            # 在模板中添加 current_user，方便记录操作者
+            format_kwargs = route_kwargs.copy()
+            format_kwargs['current_user'] = log_user
+            action_detail = action_detail_template.format(**format_kwargs)
+        except (KeyError, IndexError):
             action_detail = action_detail_template
 
     try:
         log_entry = UserActivityLog(
-            user_id=current_user.id,
-            session_id=None,  # 可以扩展为记录会话ID
+            user_id=log_user.id,
             action_type=action_type,
             action_detail=action_detail,
             status_code=status_code,
             request_method=request.method,
             endpoint=request.endpoint,
             ip_address=request.remote_addr,
-            # resource_type 和 resource_id 对于通用修饰器来说比较难获取
-            # 如果需要记录这些，可以在路由中手动调用一个辅助函数来记录
-            resource_type=None,
-            resource_id=None
         )
         db.session.add(log_entry)
         db.session.commit()
     except Exception as e:
-        # 如果日志记录失败，不应影响主流程
-        print(f"错误记录活动： {e}")
+        print(f"错误记录活动：{e}")
         db.session.rollback()

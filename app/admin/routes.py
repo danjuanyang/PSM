@@ -3,12 +3,13 @@ from flask import request, jsonify
 from . import admin_bp
 from .. import db
 from ..models import User, RoleEnum, Permission, UserPermission, RolePermission
-from ..decorators import permission_required
+from ..decorators import permission_required, log_activity
 
 
 # ------------------- 用户管理 API -------------------
 
 @admin_bp.route('/users', methods=['GET'])
+@log_activity('用户列表',action_detail_template='用户列表')
 @permission_required('view_users')  # 假设 'view_users' 是查看用户列表的权限
 def get_users():
     """获取所有用户的列表 (分页)"""
@@ -33,6 +34,7 @@ def get_users():
 
 
 @admin_bp.route('/users/<int:user_id>', methods=['GET'])
+@log_activity('用户的详细信息',action_detail_template='用户 {username} 的详细信息')
 @permission_required('view_users')
 def get_user_details(user_id):
     """获取单个用户的详细信息，包括特定权限"""
@@ -54,6 +56,7 @@ def get_user_details(user_id):
 
 
 @admin_bp.route('/users/<int:user_id>/role', methods=['PUT'])
+@log_activity('用户的角色',action_detail_template='用户 {username} 的角色')
 @permission_required('edit_user_role')
 def update_user_role(user_id):
     """更新用户的角色"""
@@ -78,6 +81,7 @@ def update_user_role(user_id):
 # ------------------- 权限管理 API -------------------
 
 @admin_bp.route('/permissions', methods=['GET'])
+@log_activity('权限列表',action_detail_template='权限列表')
 @permission_required('manage_permissions')
 def get_permissions():
     """获取所有可用权限的列表"""
@@ -88,6 +92,7 @@ def get_permissions():
 
 
 @admin_bp.route('/users/<int:user_id>/permissions', methods=['POST'])
+@log_activity('用户的权限',action_detail_template='用户 {username} 的权限')
 @permission_required('manage_permissions')
 def modify_user_permission(user_id):
     """为用户添加或移除特定权限"""
@@ -122,6 +127,7 @@ def modify_user_permission(user_id):
 # ------------------- 角色管理 API -------------------
 
 @admin_bp.route('/roles', methods=['GET'])
+@log_activity('角色列表',action_detail_template='角色列表')
 @permission_required('manage_roles')
 def get_roles():
     """获取所有角色的列表"""
@@ -130,6 +136,7 @@ def get_roles():
 
 
 @admin_bp.route('/roles/<role_name>/permissions', methods=['GET', 'PUT'])
+@log_activity('角色的权限',action_detail_template='角色 {role_name} 的权限')
 @permission_required('manage_roles')
 def manage_role_permissions(role_name):
     """获取或更新一个角色的权限"""
