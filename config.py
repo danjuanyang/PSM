@@ -1,4 +1,6 @@
 import os
+from datetime import timedelta
+
 from dotenv import load_dotenv
 
 # 定位项目根目录
@@ -14,10 +16,15 @@ class Config:
     # 从 .env 文件读取 SECRET_KEY，如果没有则使用一个默认值（强烈建议在.env中设置）
     # SECRET_KEY = os.environ.get('SECRET_KEY') or 'a-hard-to-guess-string'
     SECRET_KEY = os.environ.get('SECRET_KEY')
+    # 从环境变量加载会话生命周期，如果没有设置，则默认为1小时
+    # 注意：os.environ.get返回的是字符串，需要转换为整数
+    lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME', 3600))
+    # lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME'))
+    PERMANENT_SESSION_LIFETIME = timedelta(seconds=lifetime_seconds)
 
     # 数据库配置
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ECHO = True  # 如果想在控制台看到SQL语句，可以设为 True
+    SQLALCHEMY_ECHO = False  # 如果想在控制台看到SQL语句，可以设为 True
 
 
 class DevelopmentConfig(Config):

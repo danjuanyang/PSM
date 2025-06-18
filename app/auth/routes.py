@@ -1,5 +1,5 @@
 # PSM/app/auth/routes.py
-from flask import request, jsonify
+from flask import request, jsonify, session
 from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
@@ -83,8 +83,11 @@ def login():
 
     # 验证用户存在且密码正确
     if user and user.check_password(password):
+        # 在 login_user 之前，将会话标记为“永久”
+        session.permanent = True
         # 使用 flask-login 创建会话 (基于Cookie)
-        login_user(user, remember=True)  # remember=True 保持会话持久
+        # login_user(user, remember=True)  # remember=True 保持会话持久
+        login_user(user)
         return jsonify({
             "message": "登录成功",
             "user": {
