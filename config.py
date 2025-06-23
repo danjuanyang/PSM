@@ -27,6 +27,9 @@ class Config:
     SQLALCHEMY_ECHO = False  # 如果想在控制台看到SQL语句，可以设为 True
 
 
+    UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')  # 在项目根目录下创建uploads文件夹
+
+
 class DevelopmentConfig(Config):
     """
     开发环境配置。

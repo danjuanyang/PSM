@@ -17,12 +17,29 @@ PERMISSIONS = [
     # 其他模块的权限 (可以后续添加)
     {'name': 'manage_projects', 'description': '创建、编辑和删除项目'},
     {'name': 'view_reports', 'description': '查看人力资源报告'},
+    # 项目模块权限
+    {'name': 'manage_projects', 'description': '创建和编辑项目'},
+    {'name': 'delete_projects', 'description': '删除项目'},
+    {'name': 'manage_subprojects', 'description': '创建和编辑子项目'},
+    {'name': 'delete_subprojects', 'description': '删除子项目'},
+    {'name': 'manage_stages', 'description': '创建和编辑阶段'},
+    {'name': 'delete_stages', 'description': '删除阶段'},
+    {'name': 'manage_tasks', 'description': '创建和编辑任务'},
+    {'name': 'delete_tasks', 'description': '删除任务'},
+    {'name': 'assign_tasks', 'description': '为任务分配成员'},
+    {'name': 'update_task_progress', 'description': '更新自己的任务进度和状态'},
+    # HR
+    {'name': 'manage_teams', 'description': '分配组长和组员'},
+    {'name': 'view_clock_in_reports', 'description': '查看补卡记录报告'},
+    {'name': 'view_progress_reports', 'description': '查看任务进度更新报告'},
+
 ]
 
 # --- 定义各角色的默认权限 ---
 # 将上面定义的权限名称分配给不同的角色
 # SUPER 角色默认拥有所有权限，无需在此定义
 ROLE_DEFAULT_PERMISSIONS = {
+    RoleEnum.SUPER: ['all'],  # 特殊标记，拥有所有权限
     RoleEnum.ADMIN: [
         'view_users',
         'edit_user_role',
@@ -32,14 +49,31 @@ ROLE_DEFAULT_PERMISSIONS = {
         'view_session_logs',
         'manage_projects',
         'view_reports',
+        # 项目模块权限
+        'manage_projects', 'delete_projects',
+        'manage_subprojects', 'delete_subprojects',
+        'manage_stages', 'delete_stages',
+        'manage_tasks', 'delete_tasks',
+        'assign_tasks',
+        # 人力资源部分
+        'manage_teams',
+        'view_clock_in_reports',
+        'view_progress_reports',
     ],
     RoleEnum.LEADER: [
         'view_users',
         'manage_projects',
         'view_reports',
+        # 项目模块权限
+        'manage_subprojects', 'delete_subprojects',  # 负责人可以管理自己项目下的子项目
+        'manage_stages', 'delete_stages',
+        'manage_tasks', 'delete_tasks',
+        'assign_tasks',
+        'update_task_progress',
     ],
     RoleEnum.MEMBER: [
         # 普通成员默认可能只有查看自己项目的权限，那些通常是基于对象ID判断，而不是通用权限
+        'update_task_progress',
     ]
 }
 

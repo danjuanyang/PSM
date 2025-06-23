@@ -10,7 +10,7 @@ from ..decorators import permission_required, log_activity
 
 @admin_bp.route('/users', methods=['GET'])
 @log_activity('用户列表',action_detail_template='用户列表')
-@permission_required('view_users')  # 假设 'view_users' 是查看用户列表的权限
+@permission_required('view_users')  #'view_users' 是查看用户列表的权限
 def get_users():
     """获取所有用户的列表 (分页)"""
     page = request.args.get('page', 1, type=int)
@@ -34,7 +34,7 @@ def get_users():
 
 
 @admin_bp.route('/users/<int:user_id>', methods=['GET'])
-@log_activity('用户的详细信息',action_detail_template='用户 {username} 的详细信息')
+@log_activity('用户的详细信息',action_detail_template='用户的详细信息')
 @permission_required('view_users')
 def get_user_details(user_id):
     """获取单个用户的详细信息，包括特定权限"""
@@ -56,7 +56,7 @@ def get_user_details(user_id):
 
 
 @admin_bp.route('/users/<int:user_id>/role', methods=['PUT'])
-@log_activity('用户的角色',action_detail_template='用户 {username} 的角色')
+@log_activity('用户的角色',action_detail_template=f'更新用户角色')
 @permission_required('edit_user_role')
 def update_user_role(user_id):
     """更新用户的角色"""
@@ -92,13 +92,13 @@ def get_permissions():
 
 
 @admin_bp.route('/users/<int:user_id>/permissions', methods=['POST'])
-@log_activity('用户的权限',action_detail_template='用户 {username} 的权限')
+@log_activity('设置用户的权限',action_detail_template='设置用户的权限')
 @permission_required('manage_permissions')
 def modify_user_permission(user_id):
     """为用户添加或移除特定权限"""
     user = User.query.get_or_404(user_id)
     data = request.get_json()
-
+    log_activity.detail_kwargs = {'username': user.username}
     permission_name = data.get('permission_name')
     is_allowed = data.get('is_allowed', True)  # 默认为授予权限
 
