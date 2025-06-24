@@ -57,7 +57,7 @@ def create_app(config_name='default'):
     db.init_app(app)
     migrate.init_app(app, db)
     bcrypt.init_app(app)
-    login_manager.init_app(app) # <--- 这是关键步骤，之前缺失了
+    login_manager.init_app(app)
     CORS(app, supports_credentials=True) # 允许跨域请求，并支持credentials（如cookies）
 
     # c. 设置 user_loader 回调函数
@@ -79,6 +79,8 @@ def create_app(config_name='default'):
     from .log import log_bp
     from .alerts import alerts_bp
     from .files import files_bp
+    from .utils import utils_bp
+
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -89,7 +91,7 @@ def create_app(config_name='default'):
     app.register_blueprint(log_bp)
     app.register_blueprint(alerts_bp)
     app.register_blueprint(files_bp)
-
+    app.register_blueprint(utils_bp)
     # e. Shell 上下文处理器 (可选，但推荐)
     @app.shell_context_processor
     def make_shell_context():

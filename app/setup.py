@@ -32,7 +32,9 @@ PERMISSIONS = [
     {'name': 'manage_teams', 'description': '分配组长和组员'},
     {'name': 'view_clock_in_reports', 'description': '查看补卡记录报告'},
     {'name': 'view_progress_reports', 'description': '查看任务进度更新报告'},
-
+    # 公告权限
+    {'name': 'manage_announcements', 'description': '发布和管理公告'},
+    {'name': 'view_announcement_stats', 'description': '查看公告阅读统计'},
 ]
 
 # --- 定义各角色的默认权限 ---
@@ -59,6 +61,9 @@ ROLE_DEFAULT_PERMISSIONS = {
         'manage_teams',
         'view_clock_in_reports',
         'view_progress_reports',
+        # 公告权限
+        'manage_announcements',
+        'view_announcement_stats',
     ],
     RoleEnum.LEADER: [
         'view_users',

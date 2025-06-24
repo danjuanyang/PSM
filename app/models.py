@@ -440,3 +440,21 @@ Index('idx_ai_messages_conversation_id', AIMessage.conversation_id)
 Index('idx_ai_conversations_user_id', AIConversation.user_id)
 Index('idx_ai_conversations_updated_at', AIConversation.updated_at)
 Index('idx_ai_message_feedback_message_id', AIMessageFeedback.message_id)
+
+
+# ------------------- 提醒模型 (Alerts) -------------------
+class Alert(db.Model):
+    __tablename__ = 'alerts'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    message = db.Column(db.String(512), nullable=False)
+    # alert_type 用于避免重复生成同类提醒
+    alert_type = db.Column(db.String(50), nullable=False)
+    # related_key 用于唯一标识一个提醒事件，如 'project_deadline_15_days_35'
+    related_key = db.Column(db.String(100), unique=True, nullable=False)
+    # related_url 方便前端点击跳转
+    related_url = db.Column(db.String(255))
+    is_read = db.Column(db.Boolean, default=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    user = db.relationship('User', backref=db.backref('alerts', cascade='all, delete-orphan'))
