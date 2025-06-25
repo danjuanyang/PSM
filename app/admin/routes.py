@@ -23,12 +23,8 @@ def generate_random_password(length=10):
 @log_activity('用户列表', action_detail_template='查看用户列表')
 @permission_required('view_users')
 def get_users():
-    """获取所有用户的列表 (分页)"""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 10, type=int)
-    pagination = User.query.paginate(page=page, per_page=per_page, error_out=False)
-    users = pagination.items
-
+    """获取所有用户的列表 (不分页)"""
+    users = User.query.all()  # 获取所有用户
     return jsonify({
         'users': [
             {
@@ -37,12 +33,8 @@ def get_users():
                 'email': user.email,
                 'role': user.role.name
             } for user in users
-        ],
-        'total_pages': pagination.pages,
-        'current_page': pagination.page,
-        'total_users': pagination.total
+        ]
     })
-
 
 @admin_bp.route('/users/<int:user_id>', methods=['GET'])
 @log_activity('查看用户详细信息', action_detail_template='用户{username}的详细信息')
