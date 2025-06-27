@@ -3,13 +3,11 @@ from flask import Blueprint, request, jsonify
 from flask_login import current_user, login_required
 from sqlalchemy import extract
 from datetime import datetime, timedelta
+
+from . import hr_bp
 from .. import db
 from ..models import User, RoleEnum, ReportClockin, ReportClockinDetail, TaskProgressUpdate, StageTask
 from ..decorators import permission_required, log_activity
-
-# 创建蓝图
-hr_bp = Blueprint('hr', __name__, url_prefix='/api/hr')
-
 
 def user_to_json_with_leader(user):
     """将User对象转换为带组长信息的JSON"""
@@ -61,6 +59,18 @@ def progress_update_to_json(update):
 
 
 # --- 1. 团队管理接口 ---
+
+@hr_bp.route('/team-overview', methods=['GET'])
+@login_required
+@permission_required('manage_teams') # 确保只有具备团队管理权限的用户可以访问
+def get_team_overview():
+    """
+    获取所有用户的列表，并包含他们的团队领导信息。
+    这是为HR团队管理面板专门设计的接口。
+    """
+    all_users = User.query.order_by(User.id).all()
+    # 使用 user_to_json_with_leader 函数来确保包含了 leader_name
+    return jsonify([user_to_json_with_leader(u) for u in all_users])
 
 @hr_bp.route('/users/<int:user_id>/assign-leader', methods=['PUT'])
 @login_required
