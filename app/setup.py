@@ -14,8 +14,7 @@ PERMISSIONS = [
     # 日志查看
     {'name': 'view_activity_logs', 'description': '查看用户活动日志'},
     {'name': 'view_session_logs', 'description': '查看用户登录会话'},
-    # 其他模块的权限 (可以后续添加)
-    {'name': 'manage_projects', 'description': '创建、编辑和删除项目'},
+
     {'name': 'view_reports', 'description': '查看人力资源报告'},
     # 项目模块权限
     {'name': 'manage_projects', 'description': '创建和编辑项目'},

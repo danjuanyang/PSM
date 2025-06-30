@@ -5,15 +5,14 @@ import os
 import uuid
 from datetime import datetime
 
-from flask import Blueprint, request, jsonify, current_app, send_from_directory
+from flask import Blueprint, request, jsonify, current_app, send_from_directory, g
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
+
+from . import files_bp
 from .. import db
 from ..models import ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User
-from ..decorators import permission_required
-
-# 创建蓝图
-files_bp = Blueprint('files', __name__, url_prefix='/api/files')
+from ..decorators import permission_required, log_activity
 
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip',
@@ -80,12 +79,13 @@ def can_access_file(user, file_record):
 @files_bp.route('/tasks/<int:task_id>/upload', methods=['POST'])
 @login_required
 @permission_required('update_task_progress')
+@log_activity('上传文件', action_detail_template='为任务{task_name}上传文件')
 def upload_file_for_task(task_id):
     """
     为已完成的任务上传文件
     """
     task = StageTask.query.get_or_404(task_id)
-
+    g.log_info = {'task_name': StageTask.name}
     if task.status != StatusEnum.COMPLETED:
         return jsonify({"error": "任务尚未完成，无法上传文件"}), 403
 
