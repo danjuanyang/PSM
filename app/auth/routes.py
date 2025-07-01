@@ -73,35 +73,38 @@ def login():
     # 如果一个已登录用户尝试再次登录，先将他登出
     if current_user.is_authenticated:
         logout_user()
-
     if not request.is_json:
-        return jsonify({"error": "请求必须是JSON格式"}), 415
-
+        return jsonify({"error": "请求必须是JSON格式", "code": "INVALID_REQUEST_FORMAT"}), 415
     data = request.get_json()
     username = data.get('username')
     password = data.get('password')
     g.log_info = {'username': username}
     if not username or not password:
-        return jsonify({"error": "缺少用户名或密码"}), 400
-
+        return jsonify({"error": "缺少用户名或密码", "code": "MISSING_CREDENTIALS"}), 400
     user = User.query.filter_by(username=username).first()
+    # 1. 检查用户是否存在
+    if not user:
+        return jsonify({"error": "请检查用户名，用户不存在", "code": "USER_NOT_FOUND"}), 401
+    # 2. 检查密码是否正确
+    if not user.check_password(password):
+        return jsonify({"error": "登录错误：密码错误", "code": "INVALID_PASSWORD"}), 401
+    # 3. (可选) 检查用户是否被禁用
+    # 假设您的 User 模型有一个 is_active 字段
+    if hasattr(user, 'is_active') and not user.is_active:
+        return jsonify({"error": "该账户已被禁用，请联系管理员", "code": "USER_DISABLED"}), 403
 
-    # 验证用户存在且密码正确
-    if user and user.check_password(password):
-        session.permanent = True
-        login_user(user)  # 不使用 remember=True 来确保会话过期功能正常
-        return jsonify({
-            "message": "登录成功",
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role.name
-            }
-        }), 200
-    else:
-        # 凭证无效，返回 401 Unauthorized
-        return jsonify({"error": "用户名或密码无效"}), 401
+    # 验证通过，登录用户
+    session.permanent = True
+    login_user(user)
+    return jsonify({
+        "message": "登录成功",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role.name
+        }
+    }), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
