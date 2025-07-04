@@ -6,12 +6,10 @@ from werkzeug.utils import secure_filename
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 
+from . import announcement_bp
 from .. import db
 from ..models import Announcement, AnnouncementAttachment, AnnouncementReadStatus, User, RoleEnum
 from ..decorators import permission_required, log_activity
-
-# 创建蓝图
-announcement_bp = Blueprint('announcement', __name__, url_prefix='/announcement')
 
 # --- 辅助函数 (Helper Functions) ---
 

@@ -77,7 +77,7 @@ def create_app(config_name='default'):
     from .announcement import announcement_bp
     from .ai import ai_bp
     from .log import log_bp
-    from .alerts import alerts_bp
+    from .alerts import alert_bp
     from .files import files_bp
     from .utils import utils_bp
 
@@ -89,7 +89,7 @@ def create_app(config_name='default'):
     app.register_blueprint(announcement_bp)
     app.register_blueprint(ai_bp)
     app.register_blueprint(log_bp)
-    app.register_blueprint(alerts_bp)
+    app.register_blueprint(alert_bp)
     app.register_blueprint(files_bp)
     app.register_blueprint(utils_bp)
     # e. Shell 上下文处理器 (可选，但推荐)

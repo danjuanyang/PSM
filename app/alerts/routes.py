@@ -1,18 +1,16 @@
-#app/alerts/routes.py
+#app/alert/routes.py
 
 from flask import Blueprint, jsonify, g
 from flask_login import current_user, login_required
 from datetime import datetime, timedelta
 from sqlalchemy import and_
 
+from . import alert_bp
 from .. import db
 from ..decorators import log_activity
 from ..models import Alert, User, Project, Subproject, ProjectStage, StageTask, Announcement, AnnouncementReadStatus, \
     ProjectFile
 from ..models import StatusEnum
-
-# 创建蓝图
-alert_bp = Blueprint('alert', __name__, url_prefix='/alert')
 
 
 # --- 核心服务函数: 生成通知 ---
