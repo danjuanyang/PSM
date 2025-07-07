@@ -40,7 +40,7 @@ def init_db_command():
         super_user.set_password('123456')
         db.session.add(super_user)
         db.session.commit()
-        print("使用密码 '123456' 创建的超级用户 'super'。")
+        print("使用密码 '123456' 创建的超级用户 'super' ")
     else:
         print("超级用户已存在")
 

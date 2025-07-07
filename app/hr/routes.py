@@ -72,23 +72,61 @@ def get_team_overview():
     # 使用 user_to_json_with_leader 函数来确保包含了 leader_name
     return jsonify([user_to_json_with_leader(u) for u in all_users])
 
+# @hr_bp.route('/users/<int:user_id>/assign-leader', methods=['PUT'])
+# @login_required
+# @permission_required('manage_teams')
+# def assign_leader_to_user(user_id):
+#     """
+#     为指定组员(MEMBER)分配一个组长(LEADER)
+#     """
+#     member = User.query.get_or_404(user_id)
+#     if member.role != RoleEnum.MEMBER:
+#         return jsonify({"error": "该用户不是组员，无法分配组长"}), 400
+#
+#     data = request.get_json()
+#     leader_id = data.get('leader_id')
+#     if not leader_id:
+#         return jsonify({"error": "请求体中缺少 leader_id"}), 400
+#
+#     leader = User.query.get_or_404(leader_id)
+#     if leader.role != RoleEnum.LEADER:
+#         return jsonify({"error": "指定的用户不是组长"}), 400
+#
+#     member.team_leader_id = leader_id
+#     db.session.commit()
+#     return jsonify(user_to_json_with_leader(member)), 200
+
+
 @hr_bp.route('/users/<int:user_id>/assign-leader', methods=['PUT'])
 @login_required
 @permission_required('manage_teams')
 def assign_leader_to_user(user_id):
     """
-    为指定组员(MEMBER)分配一个组长(LEADER)
+    为指定组员(MEMBER)分配或移除一个组长(LEADER)。
+    如果 leader_id 为 null, 则表示移除组长。
     """
     member = User.query.get_or_404(user_id)
     if member.role != RoleEnum.MEMBER:
         return jsonify({"error": "该用户不是组员，无法分配组长"}), 400
 
     data = request.get_json()
-    leader_id = data.get('leader_id')
-    if not leader_id:
-        return jsonify({"error": "请求体中缺少 leader_id"}), 400
 
-    leader = User.query.get_or_404(leader_id)
+    # 检查 'leader_id' 键是否存在于请求中
+    if 'leader_id' not in data:
+        return jsonify({"error": "请求体中缺少 leader_id 键"}), 400
+
+    leader_id = data.get('leader_id')
+
+    # 如果 leader_id 是 null/None，表示移除组长
+    if leader_id is None:
+        member.team_leader_id = None
+        db.session.commit()
+        return jsonify(user_to_json_with_leader(member)), 200
+
+    # 如果 leader_id 不是 null，则执行分配逻辑
+    leader = User.query.get(leader_id)
+    if not leader:
+        return jsonify({"error": f"ID为 {leader_id} 的组长不存在"}), 404
     if leader.role != RoleEnum.LEADER:
         return jsonify({"error": "指定的用户不是组长"}), 400
 
