@@ -45,7 +45,7 @@ class RolePermission(db.Model):
     permission = db.relationship('Permission', backref='role_permissions')
 
 
-class User(UserMixin,db.Model):
+class User(UserMixin, db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -111,11 +111,19 @@ class Project(db.Model):
     files = db.relationship('ProjectFile', back_populates='project', lazy='dynamic')
 
 
+# --- 新增：子项目与成员的关联表 ---
+subproject_members = db.Table('subproject_members',
+                              db.Column('subproject_id', db.Integer, db.ForeignKey('subprojects.id'), primary_key=True),
+                              db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True)
+                              )
+
+
 class Subproject(db.Model):
     __tablename__ = 'subprojects'
     id = db.Column(db.Integer, primary_key=True)
     project_id = db.Column(db.Integer, db.ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
-    employee_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'))
+    # 移除一对一，改为多对多
+    # employee_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'))
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     start_date = db.Column(db.DateTime, default=datetime.now)
@@ -126,7 +134,11 @@ class Subproject(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
 
     project = db.relationship('Project', back_populates='subprojects')
-    employee = db.relationship('User', backref='assigned_subprojects')
+    # 多对多
+    # employee = db.relationship('User', backref='assigned_subprojects')
+    members = db.relationship('User', secondary=subproject_members, lazy='subquery',
+                              backref=db.backref('assigned_subprojects', lazy=True))
+
     stages = db.relationship('ProjectStage', back_populates='subproject', lazy='dynamic', cascade='all, delete-orphan')
     files = db.relationship('ProjectFile', back_populates='subproject', lazy='dynamic')
 

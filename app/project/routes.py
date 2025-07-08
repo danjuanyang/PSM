@@ -42,8 +42,12 @@ def subproject_to_json(subproject):
     subproject.progress = progress
     return {
         "id": subproject.id, "project_id": subproject.project_id, "name": subproject.name,
-        "description": subproject.description, "employee_id": subproject.employee_id,
-        "employee_name": subproject.employee.username if subproject.employee else None,
+        "description": subproject.description,
+        # "employee_id": subproject.employee_id,
+        # "employee_name": subproject.employee.username if subproject.employee else None,
+        # 多对多
+        "member_ids": [member.id for member in subproject.members],  # 新增
+
         "start_date": subproject.start_date.isoformat() if subproject.start_date else None,
         "deadline": subproject.deadline.isoformat() if subproject.deadline else None,
         "progress": progress, "status": subproject.status.value if subproject.status else None,
@@ -263,11 +267,17 @@ def create_subproject(project_id):
     data = request.get_json()
     new_subproject = Subproject(
         project_id=project_id, name=data['name'], description=data.get('description'),
-        employee_id=data.get('employee_id'),
+        # employee_id=data.get('employee_id'),
         start_date=datetime.fromisoformat(data['start_date']) if data.get('start_date') else None,
         deadline=datetime.fromisoformat(data['deadline']) if data.get('deadline') else None,
         status=StatusEnum[data.get('status', 'PENDING').upper()]
     )
+    # --- 处理多个成员 ---
+    member_ids = data.get('member_ids', [])
+    if member_ids:
+        members = User.query.filter(User.id.in_(member_ids)).all()
+        new_subproject.members.extend(members)
+
     db.session.add(new_subproject)
     db.session.commit()
     return jsonify(subproject_to_json(new_subproject)), 201
@@ -297,9 +307,15 @@ def update_subproject(subproject_id):
     if not (current_user.role == RoleEnum.LEADER and subproject.project.employee_id == current_user.id):
         return jsonify({"error": "权限不足, 只有项目负责人(组长)可以修改子项目"}), 403
     data = request.get_json()
-    subproject.name = data.get('name', subproject.name)
-    subproject.description = data.get('description', subproject.description)
-    subproject.employee_id = data.get('employee_id', subproject.employee_id)
+    # --- 修改：只允许更新成员 ---
+    if 'member_ids' in data:
+        member_ids = data.get('member_ids', [])
+        members = User.query.filter(User.id.in_(member_ids)).all()
+        subproject.members = members  # 直接替换成员列表
+
+    # 不允许修改其他字段
+    # subproject.name = data.get('name', subproject.name)
+    # subproject.description = data.get('description', subproject.description)
     if data.get('status'):
         subproject.status = StatusEnum[data.get('status').upper()]
     subproject.updated_at = datetime.now()
