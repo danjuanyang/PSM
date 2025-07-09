@@ -2,11 +2,9 @@ import os
 from flask import Blueprint, jsonify, current_app
 from flask_login import current_user, login_required
 
+from . import utils_bp
 from .preview import generate_file_preview
 from ..models import ProjectFile, AnnouncementAttachment, RoleEnum
-
-utils_bp = Blueprint('utils', __name__, url_prefix='/api/utils')
-
 
 # --- 权限检查辅助函数 ---
 # 这些函数集中处理不同类型文件的访问权限

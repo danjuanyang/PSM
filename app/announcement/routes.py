@@ -1,6 +1,6 @@
 import os
 import uuid
-from flask import Blueprint, request, jsonify, current_app, send_from_directory
+from flask import Blueprint, request, jsonify, current_app, send_from_directory, g
 from flask_login import current_user, login_required
 from werkzeug.utils import secure_filename
 from sqlalchemy.orm import joinedload
@@ -232,6 +232,36 @@ def get_read_statistics(announcement_id):
     }), 200
 
 
+# @announcement_bp.route('/attachments/<int:attachment_id>/download', methods=['GET'])
+# @login_required
+# @log_activity('下载附件', '{current_user.username}下载了附件')
+# def download_attachment(attachment_id):
+#     """
+#     下载公告附件
+#     """
+#     attachment = AnnouncementAttachment.query.get_or_404(attachment_id)
+#     announcement = attachment.announcement
+#
+#     # 权限检查：非管理员只能下载已上线公告的附件
+#     if not announcement.is_active and current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
+#         return jsonify({"error": "无法下载未上线公告的附件"}), 404
+#
+#     # 从存储路径中解析出目录和文件名
+#     directory = os.path.dirname(attachment.file_path)
+#     filename = os.path.basename(attachment.file_path)
+#
+#     try:
+#         return send_from_directory(
+#             directory=directory,
+#             path=filename,
+#             as_attachment=True,
+#             download_name=attachment.original_filename
+#         )
+#     except FileNotFoundError:
+#         return jsonify({"error": "附件未在服务器上找到"}), 404
+
+
+# --- 附件下载接口 (关键修复) ---
 @announcement_bp.route('/attachments/<int:attachment_id>/download', methods=['GET'])
 @login_required
 @log_activity('下载附件', '{current_user.username}下载了附件')
@@ -241,19 +271,26 @@ def download_attachment(attachment_id):
     """
     attachment = AnnouncementAttachment.query.get_or_404(attachment_id)
     announcement = attachment.announcement
-
-    # 权限检查：非管理员只能下载已上线公告的附件
+    g.log_info = f"{current_user.username}下载了附件"
+    # 权限检查
     if not announcement.is_active and current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
         return jsonify({"error": "无法下载未上线公告的附件"}), 404
 
-    # 从存储路径中解析出目录和文件名
-    directory = os.path.dirname(attachment.file_path)
-    filename = os.path.basename(attachment.file_path)
+    # --- 修复：根据上传逻辑重新构建文件路径 ---
+    upload_time = attachment.uploaded_at
+    year = str(upload_time.year)
+    month = str(upload_time.month).zfill(2)
+
+    # 获取基础上传目录
+    base_upload_folder = current_app.config['UPLOAD_FOLDER']
+
+    # 拼接成完整的目录路径
+    directory = os.path.join(base_upload_folder, 'announcements', year, month)
 
     try:
         return send_from_directory(
             directory=directory,
-            path=filename,
+            path=attachment.stored_filename,  # 使用正确的 stored_filename 字段
             as_attachment=True,
             download_name=attachment.original_filename
         )

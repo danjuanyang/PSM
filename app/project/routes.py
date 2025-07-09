@@ -1,12 +1,13 @@
 # app/project/routes.py
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from flask_login import current_user, login_required
 from sqlalchemy import func
 
 from . import project_bp
 from .. import db
-from ..models import Project, User, RoleEnum, Subproject, ProjectStage, StageTask, StatusEnum, TaskProgressUpdate
+from ..models import Project, User, RoleEnum, Subproject, ProjectStage, StageTask, StatusEnum, TaskProgressUpdate, \
+    subproject_members
 from ..decorators import permission_required, log_activity
 from datetime import datetime
 
@@ -43,11 +44,9 @@ def subproject_to_json(subproject):
     return {
         "id": subproject.id, "project_id": subproject.project_id, "name": subproject.name,
         "description": subproject.description,
-        # "employee_id": subproject.employee_id,
-        # "employee_name": subproject.employee.username if subproject.employee else None,
         # 多对多
         "member_ids": [member.id for member in subproject.members],  # 新增
-
+        "member_names": [member.username for member in subproject.members],  # 新增
         "start_date": subproject.start_date.isoformat() if subproject.start_date else None,
         "deadline": subproject.deadline.isoformat() if subproject.deadline else None,
         "progress": progress, "status": subproject.status.value if subproject.status else None,
@@ -102,16 +101,25 @@ def can_manage_project_item(item):
 
     # 组员只能管理分配给自己的子项目下的内容
     if isinstance(item, Subproject):
-        # 组长可以管理他负责的项目下的所有子项目
-        return item.project.employee_id == current_user.id
+        return db.session.query(subproject_members).filter(
+            subproject_members.c.subproject_id == item.id,
+            subproject_members.c.user_id == current_user.id
+        ).first() is not None
+
     if isinstance(item, ProjectStage):
-        # 组员可以管理分配给自己的子项目下的阶段
-        return item.subproject.employee_id == current_user.id
+        return db.session.query(subproject_members).filter(
+            subproject_members.c.subproject_id == item.subproject_id,
+            subproject_members.c.user_id == current_user.id
+        ).first() is not None
+
     if isinstance(item, StageTask):
-        # 组员可以管理分配给自己的子项目下的任务
-        return item.stage.subproject.employee_id == current_user.id
+        return db.session.query(subproject_members).filter(
+            subproject_members.c.subproject_id == item.stage.subproject_id,
+            subproject_members.c.user_id == current_user.id
+        ).first() is not None
 
     return False
+
 
 
 # --- 新增：获取特定角色的用户 ---
@@ -214,13 +222,20 @@ def update_project(project_id):
 def get_all_projects():
     user = current_user
     query = Project.query
+
     if user.role == RoleEnum.LEADER:
         query = query.filter(Project.employee_id == user.id)
     elif user.role == RoleEnum.MEMBER:
-        subquery = db.session.query(Subproject.project_id).filter(Subproject.employee_id == user.id).distinct()
+        # 查询用户作为成员参与的子项目，并关联到项目
+        subquery = db.session.query(Subproject.project_id).join(
+            subproject_members
+        ).filter(
+            subproject_members.c.user_id == user.id
+        ).distinct()
         query = query.filter(Project.id.in_(subquery))
+
     projects = query.order_by(Project.id.desc()).all()
-    projects_json = [project_to_json(p) for p in projects]
+    projects_json = [project_to_json(project) for project in projects]
     db.session.commit()
     return jsonify(projects_json), 200
 
@@ -231,16 +246,24 @@ def get_all_projects():
 def get_project(project_id):
     project = Project.query.get_or_404(project_id)
     user = current_user
+
     if user.role == RoleEnum.LEADER and project.employee_id != user.id:
         return jsonify({"error": "权限不足"}), 403
+
     if user.role == RoleEnum.MEMBER:
-        is_assigned = Subproject.query.filter_by(project_id=project_id, employee_id=user.id).first()
+        # 检查该用户是否是该项目的任何子项目的成员
+        is_assigned = db.session.query(subproject_members).filter(
+            subproject_members.c.subproject_id == Subproject.id,
+            Subproject.project_id == project_id,
+            subproject_members.c.user_id == user.id
+        ).first()
+
         if not is_assigned:
             return jsonify({"error": "权限不足"}), 403
+
     project_json = project_to_json(project)
     db.session.commit()
     return jsonify(project_json), 200
-
 
 @project_bp.route('/projects/<int:project_id>', methods=['DELETE'])
 @login_required
@@ -285,15 +308,22 @@ def create_subproject(project_id):
 
 @project_bp.route('/projects/<int:project_id>/subprojects', methods=['GET'])
 @login_required
-@log_activity('获取项目下的所有子项目', action_detail_template='获取项目下的所有子项目')
+@log_activity('获取项目下的所有子项目', action_detail_template=f'获取项目下的所有子项目')
 def get_subprojects_for_project(project_id):
+    # 确保项目存在
     Project.query.get_or_404(project_id)
+
+    user = current_user
     query = Subproject.query.filter_by(project_id=project_id)
+    # 组员只能看到分配给自己的子项目（通过中间表查询）
+    if user.role == RoleEnum.MEMBER:
+        subproject_ids = db.session.query(subproject_members.c.subproject_id).filter(
+            subproject_members.c.user_id == user.id
+        ).subquery()
 
-    # 组员只能看到分配给自己的子项目
-    if current_user.role == RoleEnum.MEMBER:
-        query = query.filter_by(employee_id=current_user.id)
+        query = query.filter(Subproject.id.in_(subproject_ids))
 
+    # 查询并返回结果
     subprojects = query.all()
     return jsonify([subproject_to_json(sp) for sp in subprojects]), 200
 
@@ -313,9 +343,6 @@ def update_subproject(subproject_id):
         members = User.query.filter(User.id.in_(member_ids)).all()
         subproject.members = members  # 直接替换成员列表
 
-    # 不允许修改其他字段
-    # subproject.name = data.get('name', subproject.name)
-    # subproject.description = data.get('description', subproject.description)
     if data.get('status'):
         subproject.status = StatusEnum[data.get('status').upper()]
     subproject.updated_at = datetime.now()
@@ -325,9 +352,10 @@ def update_subproject(subproject_id):
 
 @project_bp.route('/subprojects/<int:subproject_id>', methods=['DELETE'])
 @login_required
-@log_activity('删除子项目', action_detail_template='删除子项目')
+@log_activity('删除子项目', action_detail_template=f'{current_user}删除了子项目')
 def delete_subproject(subproject_id):
     subproject = Subproject.query.get_or_404(subproject_id)
+    g.log_info('username', current_user.username)
     # 只有项目负责人（组长）可以删除
     if subproject.project.employee_id != current_user.id:
         return jsonify({"error": "权限不足"}), 403
@@ -342,7 +370,13 @@ def delete_subproject(subproject_id):
 @log_activity('创建阶段', action_detail_template='创建阶段')
 def create_stage(subproject_id):
     subproject = Subproject.query.get_or_404(subproject_id)
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and subproject.employee_id == current_user.id
+
+    # 判断用户是否是子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == subproject_id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
+
     is_project_leader = current_user.role == RoleEnum.LEADER and subproject.project.employee_id == current_user.id
     if not (is_assigned_member or is_project_leader):
         return jsonify({"error": "权限不足, 只有被分配的组员或项目负责人可以创建阶段"}), 403
@@ -366,11 +400,20 @@ def create_stage(subproject_id):
 @log_activity('获取子项目下的所有阶段', action_detail_template='获取子项目下的所有阶段')
 def get_stages_for_subproject(subproject_id):
     subproject = Subproject.query.get_or_404(subproject_id)
-    is_admin_or_super = current_user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]
-    is_project_leader = current_user.role == RoleEnum.LEADER and subproject.project.employee_id == current_user.id
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and subproject.employee_id == current_user.id
+    user = current_user
+
+    is_admin_or_super = user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]
+    is_project_leader = user.role == RoleEnum.LEADER and subproject.project.employee_id == user.id
+
+    # 检查用户是否是该项目下任何阶段的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == subproject_id,
+        subproject_members.c.user_id == user.id
+    ).first() is not None
+
     if not (is_admin_or_super or is_project_leader or is_assigned_member):
         return jsonify({"error": "权限不足，无法查看此子项目的阶段"}), 403
+
     stages = ProjectStage.query.filter_by(subproject_id=subproject_id).all()
     stages_json = [stage_to_json(s) for s in stages]
     db.session.commit()
@@ -383,7 +426,11 @@ def get_stages_for_subproject(subproject_id):
 @log_activity('更新阶段信息', action_detail_template='更新阶段信息')
 def update_stage(stage_id):
     stage = ProjectStage.query.get_or_404(stage_id)
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and stage.subproject.employee_id == current_user.id
+    # 检查用户是否是该子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == stage.subproject_id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
     is_project_leader = current_user.role == RoleEnum.LEADER and stage.project.employee_id == current_user.id
     if not (is_assigned_member or is_project_leader):
         return jsonify({"error": "权限不足, 只有被分配的组员或项目负责人可以编辑"}), 403
@@ -404,7 +451,11 @@ def update_stage(stage_id):
 @log_activity('创建任务', action_detail_template='创建任务')
 def create_task(stage_id):
     stage = ProjectStage.query.get_or_404(stage_id)
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and stage.subproject.employee_id == current_user.id
+    # 检查用户是否是该子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == stage.subproject_id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
     is_project_leader = current_user.role == RoleEnum.LEADER and stage.project.employee_id == current_user.id
     if not (is_assigned_member or is_project_leader):
         return jsonify({"error": "权限不足"}), 403
@@ -429,7 +480,12 @@ def get_tasks_for_stage(stage_id):
     subproject = stage.subproject
     is_admin_or_super = current_user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]
     is_project_leader = current_user.role == RoleEnum.LEADER and subproject.project.employee_id == current_user.id
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and subproject.employee_id == current_user.id
+    # 检查用户是否是该子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == subproject.id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
+
     if not (is_admin_or_super or is_project_leader or is_assigned_member):
         return jsonify({"error": "权限不足，无法查看此阶段的任务"}), 403
     tasks = StageTask.query.filter_by(stage_id=stage_id).all()
@@ -444,7 +500,12 @@ def get_tasks_for_stage(stage_id):
 @log_activity('更新任务信息', action_detail_template='更新任务信息')
 def update_task(task_id):
     task = StageTask.query.get_or_404(task_id)
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and task.stage.subproject.employee_id == current_user.id
+    # 检查用户是否是该子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == task.stage.subproject_id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
+
     is_project_leader = current_user.role == RoleEnum.LEADER and task.stage.project.employee_id == current_user.id
 
     if not (is_assigned_member or is_project_leader or current_user.role in [RoleEnum.ADMIN, RoleEnum.SUPER]):
@@ -465,9 +526,16 @@ def update_task(task_id):
 # --- NEW: 任务进度更新路由 ---
 @project_bp.route('/tasks/<int:task_id>/progress-updates', methods=['POST'])
 @login_required
+@log_activity('更新任务进度', action_detail_template='{current_user}更新任务进度')
 def create_task_progress_update(task_id):
     task = StageTask.query.get_or_404(task_id)
-    is_assigned_member = current_user.role == RoleEnum.MEMBER and task.stage.subproject.employee_id == current_user.id
+    g.log_info=("username",current_user)
+    # 检查用户是否是该子项目的成员（多对多）
+    is_assigned_member = db.session.query(subproject_members).filter(
+        subproject_members.c.subproject_id == task.stage.subproject_id,
+        subproject_members.c.user_id == current_user.id
+    ).first() is not None
+
     is_project_leader = current_user.role == RoleEnum.LEADER and task.stage.project.employee_id == current_user.id
 
     if not (is_assigned_member or is_project_leader):
@@ -514,9 +582,10 @@ def create_task_progress_update(task_id):
 
 @project_bp.route('/tasks/<int:task_id>', methods=['DELETE'])
 @login_required
-@log_activity('删除任务', action_detail_template='删除任务')
+@log_activity('删除任务', action_detail_template='{username} 删除任务')
 def delete_task(task_id):
     task = StageTask.query.get_or_404(task_id)
+    g.log_info=('username', current_user)
     if not can_manage_project_item(task.stage):
         return jsonify({"error": "权限不足"}), 403
 

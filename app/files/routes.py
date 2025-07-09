@@ -85,10 +85,10 @@ def upload_file_for_task(task_id):
     为已完成的任务上传文件
     """
     task = StageTask.query.get_or_404(task_id)
-    g.log_info = {'task_name': StageTask.name}
-    if task.status != StatusEnum.COMPLETED:
-        return jsonify({"error": "任务尚未完成，无法上传文件"}), 403
+    # 修复：使用 g 对象传递任务名称
+    g.log_info = {'task_name': task.name}
 
+    # --- 修复：明确检查 request.files ---
     if 'file' not in request.files:
         return jsonify({"error": "请求中未找到文件部分"}), 400
 
@@ -133,6 +133,7 @@ def upload_file_for_task(task_id):
 
 @files_bp.route('/tasks/<int:task_id>/files', methods=['GET'])
 @login_required
+@log_activity('查看文件列表', action_detail_template='查看任务{task_name}已上传文件列表')
 def get_task_files(task_id):
     """获取指定任务下有权限查看的文件列表"""
     task = StageTask.query.get_or_404(task_id)
