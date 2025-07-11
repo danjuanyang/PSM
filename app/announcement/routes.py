@@ -2,6 +2,7 @@ import os
 import uuid
 from flask import Blueprint, request, jsonify, current_app, send_from_directory, g
 from flask_login import current_user, login_required
+from sqlalchemy.sql.functions import user
 from werkzeug.utils import secure_filename
 from sqlalchemy.orm import joinedload
 from datetime import datetime
@@ -15,7 +16,6 @@ from ..decorators import permission_required, log_activity
 
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip',
                       'rar'}
-
 
 def allowed_file(filename):
     """检查文件扩展名"""
@@ -151,32 +151,33 @@ def toggle_announcement_status(announcement_id):
 
 @announcement_bp.route('', methods=['GET'])
 @login_required
-@log_activity('查看公告列表', '{current_user.username}查看公告列表')
+@log_activity('查看公告列表', action_detail_template='{username}查看公告列表')
 def get_announcements():
     """
     获取公告列表
     - 管理员可查看所有公告
     - 普通用户只能查看已上线的公告
     """
+
+    g.log_info= {'username': current_user.username}
     query = Announcement.query
     if current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
         query = query.filter_by(is_active=True)
 
     announcements = query.order_by(Announcement.priority.desc(), Announcement.created_at.desc()).all()
-
     # 为每个公告附上当前用户的阅读状态
     return jsonify([announcement_to_json(a, current_user.id) for a in announcements]), 200
 
 
 @announcement_bp.route('/<int:announcement_id>', methods=['GET'])
 @login_required
-@log_activity('查看公告详情', '{current_user.username}查看公告详情,标记已读')
+@log_activity('查看公告详情', '{username}查看公告"{announcement_title}"详情,标记已读')
 def get_announcement_detail(announcement_id):
     """
     查看公告详情，并标记为已读
     """
     announcement = Announcement.query.get_or_404(announcement_id)
-
+    g.log_info= {'username': current_user.username , 'announcement_title': announcement.title}
     # 权限检查：非管理员只能看已上线的公告
     if not announcement.is_active and current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
         return jsonify({"error": "公告未上线"}), 404
@@ -203,12 +204,13 @@ def get_announcement_detail(announcement_id):
 
 @announcement_bp.route('/<int:announcement_id>/read-status', methods=['GET'])
 @login_required
-@log_activity('查看公告阅读状态统计', '{current_user.username}查看公告阅读状态统计')
+@log_activity('查看公告阅读状态统计', '{username}查看公告阅读状态统计')
 @permission_required('view_announcement_stats')
 def get_read_statistics(announcement_id):
     """
     获取指定公告的阅读状态统计
     """
+    g.log_info= {'username': current_user.username}
     announcement = Announcement.query.get_or_404(announcement_id)
     all_users = User.query.all()
     read_statuses = {rs.user_id: rs for rs in announcement.read_statuses}
@@ -232,46 +234,18 @@ def get_read_statistics(announcement_id):
     }), 200
 
 
-# @announcement_bp.route('/attachments/<int:attachment_id>/download', methods=['GET'])
-# @login_required
-# @log_activity('下载附件', '{current_user.username}下载了附件')
-# def download_attachment(attachment_id):
-#     """
-#     下载公告附件
-#     """
-#     attachment = AnnouncementAttachment.query.get_or_404(attachment_id)
-#     announcement = attachment.announcement
-#
-#     # 权限检查：非管理员只能下载已上线公告的附件
-#     if not announcement.is_active and current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
-#         return jsonify({"error": "无法下载未上线公告的附件"}), 404
-#
-#     # 从存储路径中解析出目录和文件名
-#     directory = os.path.dirname(attachment.file_path)
-#     filename = os.path.basename(attachment.file_path)
-#
-#     try:
-#         return send_from_directory(
-#             directory=directory,
-#             path=filename,
-#             as_attachment=True,
-#             download_name=attachment.original_filename
-#         )
-#     except FileNotFoundError:
-#         return jsonify({"error": "附件未在服务器上找到"}), 404
-
-
-# --- 附件下载接口 (关键修复) ---
+# --- 附件下载接口 ---
 @announcement_bp.route('/attachments/<int:attachment_id>/download', methods=['GET'])
 @login_required
-@log_activity('下载附件', '{current_user.username}下载了附件')
+@log_activity('下载附件', action_detail_template='{username}下载了附件')
 def download_attachment(attachment_id):
     """
     下载公告附件
     """
     attachment = AnnouncementAttachment.query.get_or_404(attachment_id)
     announcement = attachment.announcement
-    g.log_info = f"{current_user.username}下载了附件"
+
+    g.log_info = {"username": current_user.username}
     # 权限检查
     if not announcement.is_active and current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
         return jsonify({"error": "无法下载未上线公告的附件"}), 404

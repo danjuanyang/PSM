@@ -1,13 +1,17 @@
 # app/hr/routes.py
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from flask_login import current_user, login_required
-from sqlalchemy import extract
+from sqlalchemy import extract, func
 from datetime import datetime, timedelta
+
+from sqlalchemy.orm import aliased
 
 from . import hr_bp
 from .. import db
-from ..models import User, RoleEnum, ReportClockin, ReportClockinDetail, TaskProgressUpdate, StageTask
+from ..models import User, RoleEnum, ReportClockin, ReportClockinDetail, TaskProgressUpdate, StageTask, Project, \
+    Subproject, ProjectStage
 from ..decorators import permission_required, log_activity
+
 
 def user_to_json_with_leader(user):
     """将User对象转换为带组长信息的JSON"""
@@ -62,7 +66,7 @@ def progress_update_to_json(update):
 
 @hr_bp.route('/team-overview', methods=['GET'])
 @login_required
-@permission_required('manage_teams') # 确保只有具备团队管理权限的用户可以访问
+@permission_required('manage_teams')  # 确保只有具备团队管理权限的用户可以访问
 def get_team_overview():
     """
     获取所有用户的列表，并包含他们的团队领导信息。
@@ -71,30 +75,6 @@ def get_team_overview():
     all_users = User.query.order_by(User.id).all()
     # 使用 user_to_json_with_leader 函数来确保包含了 leader_name
     return jsonify([user_to_json_with_leader(u) for u in all_users])
-
-# @hr_bp.route('/users/<int:user_id>/assign-leader', methods=['PUT'])
-# @login_required
-# @permission_required('manage_teams')
-# def assign_leader_to_user(user_id):
-#     """
-#     为指定组员(MEMBER)分配一个组长(LEADER)
-#     """
-#     member = User.query.get_or_404(user_id)
-#     if member.role != RoleEnum.MEMBER:
-#         return jsonify({"error": "该用户不是组员，无法分配组长"}), 400
-#
-#     data = request.get_json()
-#     leader_id = data.get('leader_id')
-#     if not leader_id:
-#         return jsonify({"error": "请求体中缺少 leader_id"}), 400
-#
-#     leader = User.query.get_or_404(leader_id)
-#     if leader.role != RoleEnum.LEADER:
-#         return jsonify({"error": "指定的用户不是组长"}), 400
-#
-#     member.team_leader_id = leader_id
-#     db.session.commit()
-#     return jsonify(user_to_json_with_leader(member)), 200
 
 
 @hr_bp.route('/users/<int:user_id>/assign-leader', methods=['PUT'])
@@ -154,12 +134,13 @@ def promote_to_leader(user_id):
 @hr_bp.route('/clock-in-records', methods=['GET'])
 @login_required
 @permission_required('view_clock_in_reports')  # 权限已细分
+@log_activity('查看打卡记录', action_detail_template='{username}查看了打卡记录')
 def get_clock_in_records():
     """
     查询补卡记录，支持按用户和月份过滤
     """
     query = ReportClockinDetail.query.join(ReportClockin)
-
+    g.log_info = {'username': current_user.username}
     user_id = request.args.get('user_id', type=int)
     if user_id:
         query = query.filter(ReportClockin.employee_id == user_id)
@@ -177,47 +158,165 @@ def get_clock_in_records():
 
 
 # --- 3. 任务进度历史接口 ---
-
 @hr_bp.route('/task-progress-updates', methods=['GET'])
 @login_required
 @permission_required('view_progress_reports')
 def get_task_progress_updates():
     """
-    查询任务进度更新记录，支持按用户和时间段(天/周/月)过滤
+    获取任务进度更新记录，并计算每次更新与上一次的进度差。
     """
-    query = TaskProgressUpdate.query
+    # 使用子查询和窗口函数来获取上一次的进度
+    prev_update = aliased(TaskProgressUpdate)
+    subquery = db.session.query(
+        TaskProgressUpdate.id,
+        func.lag(TaskProgressUpdate.progress, 1, 0).over(
+            partition_by=TaskProgressUpdate.task_id,
+            order_by=TaskProgressUpdate.created_at
+        ).label('previous_progress')
+    ).subquery()
 
-    # 按用户过滤
+    # 主查询，关联任务、阶段、项目等信息，并左连接子查询以获取 'previous_progress'
+    query = db.session.query(
+        TaskProgressUpdate,
+        subquery.c.previous_progress
+    ).join(
+        subquery, TaskProgressUpdate.id == subquery.c.id
+    ).join(
+        StageTask, TaskProgressUpdate.task_id == StageTask.id
+    ).join(
+        ProjectStage, StageTask.stage_id == ProjectStage.id
+    ).join(
+        Subproject, ProjectStage.subproject_id == Subproject.id
+    ).join(
+        Project, Subproject.project_id == Project.id
+    ).join(
+        User, TaskProgressUpdate.recorder_id == User.id
+    ).order_by(TaskProgressUpdate.created_at.desc())
+
+    # 应用筛选
     recorder_id = request.args.get('recorder_id', type=int)
     if recorder_id:
         query = query.filter(TaskProgressUpdate.recorder_id == recorder_id)
 
-    # 按时间段过滤
-    period = request.args.get('period')  # e.g., '天', '周', '月'
-    today = datetime.now().date()
+    period = request.args.get('period')
+    if period:
+        today = datetime.now().date()
+        start_date = None
+        if period == 'day':
+            start_date = today
+        elif period == 'week':
+            start_date = today - timedelta(days=today.weekday())
+        elif period == 'month':
+            start_date = today.replace(day=1)
 
-    start_date = None
-    end_date = None
+        if start_date:
+            end_date = start_date + timedelta(days=1) if period == 'day' else (
+                start_date + timedelta(weeks=1) if period == 'week' else (
+                    start_date.replace(month=start_date.month % 12 + 1,
+                                       day=1) if start_date.month < 12 else start_date.replace(year=start_date.year + 1,
+                                                                                               month=1, day=1)))
+            query = query.filter(TaskProgressUpdate.created_at.between(start_date, end_date))
 
-    if period == 'day':
-        start_date = datetime.combine(today, datetime.min.time())
-        end_date = start_date + timedelta(days=1)
-    elif period == 'week':
-        start_of_week = today - timedelta(days=today.weekday())
-        start_date = datetime.combine(start_of_week, datetime.min.time())
-        end_date = start_date + timedelta(weeks=1)
-    elif period == 'month':
-        start_of_month = today.replace(day=1)
-        start_date = datetime.combine(start_of_month, datetime.min.time())
-        # 计算下个月的第一天
-        if start_of_month.month == 12:
-            end_of_month = start_of_month.replace(year=start_of_month.year + 1, month=1)
-        else:
-            end_of_month = start_of_month.replace(month=start_of_month.month + 1)
-        end_date = datetime.combine(end_of_month, datetime.min.time())
+    results = query.all()
 
-    if start_date and end_date:
-        query = query.filter(TaskProgressUpdate.created_at >= start_date, TaskProgressUpdate.created_at < end_date)
+    # 序列化结果
+    updates_json = []
+    for update, previous_progress in results:
+        updates_json.append({
+            'id': update.id,
+            'progress': update.progress,
+            'previous_progress': previous_progress,  # 新增字段
+            'description': update.description,
+            'created_at': update.created_at.isoformat(),
+            'recorder_id': update.recorder_id,
+            'recorder_name': update.recorder.username if update.recorder else None,
+            'task_info': {
+                'id': update.task.id,
+                'name': update.task.name,
+                'stage': update.task.stage.name,
+                'subproject': update.task.stage.subproject.name,
+                'project': update.task.stage.project.name
+            }
+        })
 
-    updates = query.order_by(TaskProgressUpdate.created_at.desc()).all()
-    return jsonify([progress_update_to_json(u) for u in updates]), 200
+    return jsonify(updates_json)
+
+
+# --- 3. 新增：补卡填报接口 ---
+@hr_bp.route('/clock-in-records', methods=['POST'])
+@login_required
+@log_activity('提交补卡记录', action_detail_template='{username}提交了补卡记录')
+def submit_clock_in_record():
+    """
+    员工提交一个月度的补卡记录.
+    """
+    data = request.get_json()
+    if not data or 'year' not in data or 'month' not in data or 'details' not in data:
+        return jsonify({"error": "请求数据不完整"}), 400
+
+    year = data['year']
+    month = data['month']
+    details = data['details']
+    g.log_info = {"username": current_user.username}
+    # 检查本月是否已提交过
+    existing_report = ReportClockin.query.filter(
+        ReportClockin.employee_id == current_user.id,
+        db.extract('year', ReportClockin.report_date) == year,
+        db.extract('month', ReportClockin.report_date) == month
+    ).first()
+
+    if existing_report:
+        return jsonify({"error": f"{year}年{month}月的补卡记录已提交，不可重复提交。"}), 409
+
+    # 创建主记录
+    new_report = ReportClockin(
+        employee_id=current_user.id,
+        report_date=datetime(year, month, 1)
+    )
+    db.session.add(new_report)
+    db.session.flush()
+
+    # 创建详细记录
+    for detail in details:
+        clockin_date_str = detail.get('date')
+        remarks = detail.get('remarks')
+        if not clockin_date_str or not remarks:
+            continue
+
+        clockin_date = datetime.strptime(clockin_date_str, '%Y-%m-%d').date()
+        weekday_str = clockin_date.strftime('%A')
+
+        new_detail = ReportClockinDetail(
+            report_id=new_report.id,
+            clockin_date=clockin_date,
+            weekday=weekday_str,
+            remarks=remarks
+        )
+        db.session.add(new_detail)
+
+    db.session.commit()
+    return jsonify({"message": "补卡记录提交成功"}), 201
+
+
+# --- 新增：员工查询自己当月的提交记录 ---
+@hr_bp.route('/clock-in-records/my-current-month', methods=['GET'])
+@login_required
+@log_activity('查询补卡记录', action_detail_template='{username}查询了补卡记录')
+def get_my_current_month_records():
+    """
+    获取当前登录用户在本月的补卡提交记录。
+    """
+    today = datetime.now()
+    year = today.year
+    month = today.month
+    g.log_info = {"username": current_user.username}
+    records = ReportClockinDetail.query.join(ReportClockin).filter(
+        ReportClockin.employee_id == current_user.id,
+        extract('year', ReportClockin.report_date) == year,
+        extract('month', ReportClockin.report_date) == month
+    ).all()
+
+    if not records:
+        return jsonify([])
+
+    return jsonify([clockin_detail_to_json(r) for r in records])
