@@ -4,7 +4,7 @@ from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
 from ..decorators import log_activity
-from ..models import User, RoleEnum
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission
 from .. import db, bcrypt
 
 
@@ -122,22 +122,59 @@ def logout():
 
 
 @auth_bp.route('/status', methods=['GET'])
-# @log_activity('检查登录状态', action_detail_template='用户 {username} 检查登录状态')
-# 没必要记录这个操作，要获取用户是否离线，会频繁请求
 def status():
     """
-    检查当前用户的登录状态。
-    前端可以用这个接口来判断是否需要显示登录页。
+    检查当前用户的登录状态并返回完整的用户信息。
+    包含角色和权限数据以支持前端动态路由生成。
     """
-    g.log_info = {'username': current_user.username}
+    g.log_info = {'username': current_user.username if current_user.is_authenticated else 'anonymous'}
+
     if current_user.is_authenticated:
+        # 获取用户权限列表
+        user_permissions = []
+
+        # SUPER用户拥有所有权限
+        if current_user.role == RoleEnum.SUPER:
+            all_permissions = Permission.query.filter_by(is_active=True).all()
+            user_permissions = [{'name': p.name} for p in all_permissions]
+        else:
+            # 1. 获取用户特定权限（如果存在）
+            specific_permissions = UserPermission.query.join(Permission).filter(
+                UserPermission.user_id == current_user.id,
+                Permission.is_active == True
+            ).all()
+
+            if specific_permissions:
+                # 使用用户特定权限覆盖
+                user_permissions = [
+                    {'name': up.permission.name}
+                    for up in specific_permissions
+                    if up.is_allowed
+                ]
+            else:
+                # 2. 使用角色默认权限
+                role_permissions = RolePermission.query.join(Permission).filter(
+                    RolePermission.role == current_user.role,
+                    RolePermission.is_allowed == True,
+                    Permission.is_active == True
+                ).all()
+
+                user_permissions = [
+                    {'name': rp.permission.name}
+                    for rp in role_permissions
+                ]
+
         return jsonify({
             "logged_in": True,
-            "user": {
-                "id": current_user.id,
-                "username": current_user.username,
-                "email": current_user.email,
-                "role": current_user.role.name
+            "data": {
+                "user": {
+                    "id": current_user.id,
+                    "username": current_user.username,
+                    "email": current_user.email,
+                    "role": current_user.role.name  # 枚举的name属性
+                },
+                "roles": [current_user.role.name],
+                "permissions": user_permissions
             }
         }), 200
     else:
