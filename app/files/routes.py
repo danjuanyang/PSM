@@ -97,7 +97,8 @@ def upload_file_for_task(task_id):
         return jsonify({"error": "未选择文件"}), 400
 
     if file and allowed_file(file.filename):
-        original_filename = secure_filename(file.filename)
+        original_filename = file.filename
+        file_ext = original_filename.rsplit('.', 1)[1].lower()
         file_ext = original_filename.rsplit('.', 1)[1].lower()
 
         # 优化存储路径：按模块/年份/月份分桶

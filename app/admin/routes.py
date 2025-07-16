@@ -3,6 +3,7 @@ import random
 import string
 from flask import request, jsonify, g
 from flask_bcrypt import generate_password_hash
+from flask_login import login_required, current_user
 
 from . import admin_bp
 from .. import db
@@ -19,12 +20,47 @@ def generate_random_password(length=10):
 
 # ------------------- 用户管理 API -------------------
 
+# @admin_bp.route('/users', methods=['GET'])
+# @log_activity('用户列表', action_detail_template='查看用户列表')
+# @permission_required('view_users')
+# def get_users():
+#     """获取所有用户的列表 (不分页)"""
+#     users = User.query.all()  # 获取所有用户
+#     return jsonify({
+#         'users': [
+#             {
+#                 'id': user.id,
+#                 'username': user.username,
+#                 'email': user.email,
+#                 'role': user.role.name
+#             } for user in users
+#         ]
+#     })
+
+
 @admin_bp.route('/users', methods=['GET'])
 @log_activity('用户列表', action_detail_template='查看用户列表')
 @permission_required('view_users')
 def get_users():
-    """获取所有用户的列表 (不分页)"""
-    users = User.query.all()  # 获取所有用户
+    """
+    获取所有用户的列表 (不分页)
+    根据当前用户权限过滤列表，低权限管理员无法看到高权限或同级管理员。
+    """
+    query = User.query
+
+    # SUPER 角色可以查看所有用户
+    if current_user.role != RoleEnum.SUPER:
+        # 获取当前用户角色的数值
+        current_user_role_value = current_user.role.value
+
+        # 找出所有权限更高或同级的角色 (数值更小或相等)
+        excluded_roles = [r for r in RoleEnum if r.value <= current_user_role_value]
+
+        # 从查询中排除这些角色的用户
+        # 使用 notin_ 操作符，它会正确处理枚举类型
+        query = query.filter(User.role.notin_(excluded_roles))
+
+    users = query.all()
     return jsonify({
         'users': [
             {
@@ -35,6 +71,7 @@ def get_users():
             } for user in users
         ]
     })
+
 
 @admin_bp.route('/users/<int:user_id>', methods=['GET'])
 @log_activity('查看用户详细信息', action_detail_template='用户{username}的详细信息')
@@ -89,7 +126,7 @@ def reset_user_password(user_id):
     """
     user = User.query.get_or_404(user_id)
     new_password = generate_random_password()
-    g.log_info = {'username': user.username,'id': user.id}
+    g.log_info = {'username': user.username, 'id': user.id}
     # 使用在 User model 中定义的 set_password 方法
     user.set_password(new_password)
     db.session.commit()
@@ -203,7 +240,6 @@ def manage_role_permissions(role_name):
             return jsonify({'error': '更新权限时出错', 'details': str(e)}), 500
 
         return jsonify({'message': f'角色的权限"{role.name}"已更新。'})
-
 
 # 培训功能，管理员分配培训任务，每个月分配一个用户
 
