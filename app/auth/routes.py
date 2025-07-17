@@ -171,6 +171,7 @@ def status():
                     "id": current_user.id,
                     "username": current_user.username,
                     "email": current_user.email,
+                    "create_at":current_user.created_at,
                     "role": current_user.role.name  # 枚举的name属性
                 },
                 "roles": [current_user.role.name],
@@ -215,3 +216,77 @@ def change_password():
             "email": current_user.email
         }
     }), 201
+
+
+# 更改用户名
+@auth_bp.route('/change_username', methods=['POST'])
+@login_required
+@log_activity('修改用户名', action_detail_template='用户 {username} 修改用户名')
+def change_username():
+    """
+    用户修改用户名API端点。
+    :return:
+    """
+    g.log_info = {'username': current_user.username}
+    if not request.is_json:
+        return jsonify({"error": "请求必须是JSON格式"}), 415
+
+    data = request.get_json()
+    new_username = data.get('new_username')
+
+    if not new_username:
+        return jsonify({"error": "缺少新用户名"}), 400
+
+    # 检查用户名是否已存在
+    existing_user = User.query.filter_by(username=new_username).first()
+    if existing_user:
+        return jsonify("用户名已存在"), 400
+    current_user.username = new_username
+    db.session.commit()
+    return jsonify({"message": "用户名修改成功"}), 201
+
+
+# 更改邮箱
+@auth_bp.route('/change_email', methods=['POST'])
+@login_required
+@log_activity('修改邮箱', action_detail_template='用户 {username} 修改邮箱')
+def change_email():
+    """
+    用户修改邮箱API端点。
+    需要提供新邮箱和当前密码进行验证。
+    """
+    g.log_info = {'username': current_user.username}
+    if not request.is_json:
+        return jsonify({"error": "请求必须是JSON格式"}), 415
+
+    data = request.get_json()
+    new_email = data.get('new_email')
+    password = data.get('password')
+
+    if not new_email or not password:
+        return jsonify({"error": "缺少新邮箱或密码"}), 400
+
+    # 验证邮箱格式
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
+        return jsonify({"error": "无效的邮箱格式"}), 400
+
+    # 验证当前密码
+    if not current_user.check_password(password):
+        return jsonify({"error": "密码不正确，无法完成操作"}), 401
+
+    # 检查新邮箱是否已被其他用户注册
+    existing_user = User.query.filter(User.email == new_email, User.id != current_user.id).first()
+    if existing_user:
+        return jsonify({"error": "该邮箱已被注册"}), 409
+
+    current_user.email = new_email
+    db.session.commit()
+
+    return jsonify({
+        "message": "用户修改邮箱成功",
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email
+        }
+    }), 200
