@@ -174,10 +174,11 @@ def download_file(file_id):
 
 @files_bp.route('/<int:file_id>', methods=['DELETE'])
 @login_required
+@log_activity('删除文件', action_detail_template='{username}删除文件{file_name}')
 def delete_file(file_id):
     """删除文件记录和物理文件，增加细分的权限检查"""
     file_record = ProjectFile.query.get_or_404(file_id)
-
+    g.log_info = {'file_name': file_record.original_name,"username":current_user.username}
     # 权限检查：只有上传者或管理员/项目负责人可以删除
     is_uploader = file_record.upload_user_id == current_user.id
 
@@ -212,3 +213,60 @@ def get_public_files():
     """获取所有公开文件"""
     files = ProjectFile.query.filter_by(is_public=True).all()
     return jsonify([file_to_json(f) for f in files]), 200
+
+
+@files_bp.route('/', methods=['GET'])
+@login_required
+def get_all_files():
+    """
+    获取文件列表，支持基于项目、子项目、阶段、任务和公开状态的动态过滤。
+    - 超级/管理员可以查看所有文件。
+    - 项目负责人可以查看其项目下的所有文件。
+    - 普通用户可以查看自己上传的、公开的、或参与的子项目下的文件。
+    """
+    query = ProjectFile.query
+
+    # 提取查询参数
+    project_id = request.args.get('project_id', type=int)
+    subproject_id = request.args.get('subproject_id', type=int)
+    stage_id = request.args.get('stage_id', type=int)
+    task_id = request.args.get('task_id', type=int)
+    is_public_str = request.args.get('is_public', type=str)
+
+    # 根据参数构建查询
+    if project_id:
+        query = query.filter(ProjectFile.project_id == project_id)
+    if subproject_id:
+        query = query.filter(ProjectFile.subproject_id == subproject_id)
+    if stage_id:
+        query = query.filter(ProjectFile.stage_id == stage_id)
+    if task_id:
+        query = query.filter(ProjectFile.task_id == task_id)
+
+    if is_public_str is not None:
+        if is_public_str.lower() == 'true':
+            query = query.filter(ProjectFile.is_public == True)
+        elif is_public_str.lower() == 'false':
+            query = query.filter(ProjectFile.is_public == False)
+
+    all_files = query.order_by(ProjectFile.upload_date.desc()).all()
+
+    # 根据用户角色进行权限过滤
+    user = current_user
+    accessible_files = []
+
+    if user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]:
+        accessible_files = all_files
+    else:
+        user_subproject_ids = [sp.id for sp in user.assigned_subprojects]
+        leader_project_ids = [p.id for p in user.projects]
+
+        for f in all_files:
+            # 检查是否满足任一条件
+            if (f.is_public or
+                    f.upload_user_id == user.id or
+                    f.subproject_id in user_subproject_ids or
+                    f.project_id in leader_project_ids):
+                accessible_files.append(f)
+
+    return jsonify([file_to_json(f) for f in accessible_files]), 200
