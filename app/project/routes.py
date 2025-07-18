@@ -223,16 +223,23 @@ def get_all_projects():
     user = current_user
     query = Project.query
 
-    if user.role == RoleEnum.LEADER:
+    # SUPER/ADMIN 或拥有 manage_projects 权限的用户可以查看所有项目
+    if user.role in [RoleEnum.SUPER, RoleEnum.ADMIN] or user.can('manage_projects'):
+        pass  # 不对 query 做任何限制
+    elif user.role == RoleEnum.LEADER:
+        # 组长可以看到自己负责的项目
         query = query.filter(Project.employee_id == user.id)
     elif user.role == RoleEnum.MEMBER:
-        # 查询用户作为成员参与的子项目，并关联到项目
+        # 组员只能看到自己参与的项目
         subquery = db.session.query(Subproject.project_id).join(
             subproject_members
         ).filter(
             subproject_members.c.user_id == user.id
         ).distinct()
         query = query.filter(Project.id.in_(subquery))
+    else:
+        # 其他情况，返回空列表
+        return jsonify([]), 200
 
     projects = query.order_by(Project.id.desc()).all()
     projects_json = [project_to_json(project) for project in projects]
@@ -247,6 +254,13 @@ def get_project(project_id):
     project = Project.query.get_or_404(project_id)
     user = current_user
 
+    # 如果用户是管理员或拥有 manage_projects 权限，则直接允许访问
+    if user.role in [RoleEnum.SUPER, RoleEnum.ADMIN] or user.can('manage_projects'):
+        project_json = project_to_json(project)
+        db.session.commit()
+        return jsonify(project_json), 200
+
+    # 否则，按现有逻辑检查是否为项目负责人或成员
     if user.role == RoleEnum.LEADER and project.employee_id != user.id:
         return jsonify({"error": "权限不足"}), 403
 
@@ -402,16 +416,16 @@ def get_stages_for_subproject(subproject_id):
     subproject = Subproject.query.get_or_404(subproject_id)
     user = current_user
 
+    # 权限检查
+    can_manage = user.can('manage_projects') or user.can('manage_stages')
     is_admin_or_super = user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]
     is_project_leader = user.role == RoleEnum.LEADER and subproject.project.employee_id == user.id
-
-    # 检查用户是否是该项目下任何阶段的成员（多对多）
     is_assigned_member = db.session.query(subproject_members).filter(
         subproject_members.c.subproject_id == subproject_id,
         subproject_members.c.user_id == user.id
     ).first() is not None
 
-    if not (is_admin_or_super or is_project_leader or is_assigned_member):
+    if not (is_admin_or_super or is_project_leader or is_assigned_member or can_manage):
         return jsonify({"error": "权限不足，无法查看此子项目的阶段"}), 403
 
     stages = ProjectStage.query.filter_by(subproject_id=subproject_id).all()

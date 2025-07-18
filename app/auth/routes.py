@@ -1,4 +1,6 @@
 # PSM/app/auth/routes.py
+import re
+
 from flask import request, jsonify, session, g
 from flask_login import login_user, logout_user, current_user, login_required
 
@@ -130,39 +132,34 @@ def status():
     g.log_info = {'username': current_user.username if current_user.is_authenticated else 'anonymous'}
 
     if current_user.is_authenticated:
-        # 获取用户权限列表
-        user_permissions = []
+        # 权限计算逻辑重构
+        final_permissions = {}
 
-        # SUPER用户拥有所有权限
+        # 1. SUPER用户拥有所有激活的权限
         if current_user.role == RoleEnum.SUPER:
-            all_permissions = Permission.query.filter_by(is_active=True).all()
-            user_permissions = [{'name': p.name} for p in all_permissions]
+            all_active_permissions = Permission.query.filter_by(is_active=True).all()
+            for p in all_active_permissions:
+                final_permissions[p.name] = True
         else:
-            # 1. 获取用户特定权限（如果存在）
+            # 2. 首先加载角色的所有有效权限
+            role_permissions = RolePermission.query.join(Permission).filter(
+                RolePermission.role == current_user.role,
+                RolePermission.is_allowed == True,
+                Permission.is_active == True
+            ).all()
+            for rp in role_permissions:
+                final_permissions[rp.permission.name] = True
+
+            # 3. 获取用户的特定权限设置并用其覆盖角色权限
             specific_permissions = UserPermission.query.join(Permission).filter(
                 UserPermission.user_id == current_user.id,
                 Permission.is_active == True
             ).all()
+            for up in specific_permissions:
+                final_permissions[up.permission.name] = up.is_allowed
 
-            if specific_permissions:
-                # 使用用户特定权限覆盖
-                user_permissions = [
-                    {'name': up.permission.name}
-                    for up in specific_permissions
-                    if up.is_allowed
-                ]
-            else:
-                # 2. 使用角色默认权限
-                role_permissions = RolePermission.query.join(Permission).filter(
-                    RolePermission.role == current_user.role,
-                    RolePermission.is_allowed == True,
-                    Permission.is_active == True
-                ).all()
-
-                user_permissions = [
-                    {'name': rp.permission.name}
-                    for rp in role_permissions
-                ]
+        # 4. 格式化最终的权限列表，只包括被允许的权限
+        user_permissions = [{'name': name} for name, allowed in final_permissions.items() if allowed]
 
         return jsonify({
             "logged_in": True,
