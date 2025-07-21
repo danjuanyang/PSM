@@ -232,6 +232,38 @@ class FileContent(db.Model):
     file_id = db.Column(db.Integer, db.ForeignKey('project_files.id', ondelete='CASCADE'), unique=True, nullable=False)
     content = db.Column(db.Text)
     file = db.relationship('ProjectFile', back_populates='content')
+    fts_content = db.relationship('FileContentFts', back_populates='file_content_ref', uselist=False, cascade='all, delete-orphan')
+
+
+class FileContentFts(db.Model):
+    __tablename__ = 'file_contents_fts'
+    rowid = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.Text)
+    content_rowid = db.Column(db.Integer, db.ForeignKey('file_contents.id'))
+    file_content_ref = db.relationship('FileContent', back_populates='fts_content')
+
+@event.listens_for(FileContent, 'after_insert')
+@event.listens_for(FileContent, 'after_update')
+def update_fts_content(mapper, connection, target):
+    if target.id is None or target.content is None:
+        return
+
+    # 检查FTS表是否存在
+    inspector = db.inspect(db.engine)
+    if not inspector.has_table(FileContentFts.__tablename__):
+        return
+
+    fts_table = FileContentFts.__table__
+    connection.execute(
+        fts_table.delete().where(fts_table.c.content_rowid == target.id)
+    )
+    if target.content:
+        connection.execute(
+            fts_table.insert().values(
+                content_rowid=target.id,
+                content=target.content
+            )
+        )
 
 
 # ------------------- 人力资源相关模型 (HR Models) -------------------

@@ -1,7 +1,10 @@
 # PSM/app/setup.py
 import click
+import os
 from . import db
-from .models import Permission, RolePermission, RoleEnum
+from .models import Permission, RolePermission, RoleEnum, ProjectFile, FileContent
+from .files.routes import extract_text_from_file
+
 
 # --- 定义应用所需的所有权限 ---
 # 格式：{'name': '权限名称', 'description': '权限描述'}
@@ -118,3 +121,43 @@ def register_commands(app):
                         click.echo(f" 批予'{perm_name}' 目标角色 '{role.name}'")
         db.session.commit()
         click.echo('已成功分配角色权限。')
+
+    @app.cli.command('index')
+    @click.option('--reindex', is_flag=True, help='强制为所有文件重新建立索引')
+    def index(reindex):
+        """为已上传的文件创建或更新全文搜索索引。"""
+        query = ProjectFile.query
+        if not reindex:
+            query = query.filter_by(text_extracted=False)
+
+        files_to_index = query.all()
+        if not files_to_index:
+            click.echo('没有需要索引的文件。')
+            return
+
+        click.echo(f'开始为 {len(files_to_index)} 个文件建立索引...')
+        with click.progressbar(files_to_index) as bar:
+            for project_file in bar:
+                if not os.path.exists(project_file.file_path):
+                    continue
+
+                file_ext = project_file.file_type
+                extracted_text = extract_text_from_file(project_file.file_path, file_ext)
+
+                if extracted_text:
+                    # 查找现有的FileContent记录
+                    file_content = FileContent.query.filter_by(file_id=project_file.id).first()
+                    if file_content:
+                        # 更新内容
+                        file_content.content = extracted_text
+                    else:
+                        # 创建新记录
+                        file_content = FileContent(file_id=project_file.id, content=extracted_text)
+                        db.session.add(file_content)
+                    
+                    project_file.text_extracted = True
+                    db.session.add(project_file)
+
+        db.session.commit()
+        click.echo('索引建立完成。')
+

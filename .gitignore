@@ -245,3 +245,5 @@
 /node_modules/xlsx/xlsx.mjs
 /node_modules/xlsx/xlsxworker.js
 /node_modules/.package-lock.json
+/migrations/versions/3f23da52a244_.py
+/migrations/versions/4ae1d7a97e59_.py

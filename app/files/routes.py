@@ -4,6 +4,8 @@
 import os
 import uuid
 from datetime import datetime
+import pdfplumber
+import docx
 
 from flask import Blueprint, request, jsonify, current_app, send_from_directory, g
 from flask_login import current_user, login_required
@@ -11,7 +13,7 @@ from werkzeug.utils import secure_filename
 
 from . import files_bp
 from .. import db
-from ..models import ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User
+from ..models import ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User, FileContent, FileContentFts
 from ..decorators import permission_required, log_activity
 
 # 允许的文件扩展名
@@ -25,9 +27,28 @@ def allowed_file(filename):
         filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def file_to_json(file_record):
-    """将ProjectFile对象转换为JSON"""
-    return {
+def extract_text_from_file(file_path, file_ext):
+    """从文件中提取文本"""
+    text = ""
+    try:
+        if file_ext == 'pdf':
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    text += page.extract_text() or ""
+        elif file_ext == 'docx':
+            doc = docx.Document(file_path)
+            for para in doc.paragraphs:
+                text += para.text + '\n'
+        elif file_ext == 'txt':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+    except Exception as e:
+        current_app.logger.error(f"Error extracting text from {file_path}: {e}")
+    return text
+
+def file_to_json(file_record, snippet=None):
+    """将ProjectFile对象转换为JSON，可选择性地包含一个代码片段"""
+    data = {
         'id': file_record.id,
         'original_name': file_record.original_name,
         'file_name': file_record.file_name,
@@ -42,6 +63,9 @@ def file_to_json(file_record):
         'subproject_id': file_record.subproject_id,
         'project_id': file_record.project_id
     }
+    if snippet:
+        data['snippet'] = snippet
+    return data
 
 
 def can_access_file(user, file_record):
@@ -99,7 +123,6 @@ def upload_file_for_task(task_id):
     if file and allowed_file(file.filename):
         original_filename = file.filename
         file_ext = original_filename.rsplit('.', 1)[1].lower()
-        file_ext = original_filename.rsplit('.', 1)[1].lower()
 
         # 优化存储路径：按模块/年份/月份分桶
         module = 'projects'
@@ -126,6 +149,15 @@ def upload_file_for_task(task_id):
         )
         db.session.add(new_file)
         db.session.commit()
+
+        # 提取文件内容并存储
+        extracted_text = extract_text_from_file(file_path, file_ext)
+        if extracted_text:
+            file_content = FileContent(file_id=new_file.id, content=extracted_text)
+            db.session.add(file_content)
+            db.session.commit()
+            new_file.text_extracted = True
+            db.session.commit()
 
         return jsonify({"message": "文件上传成功", "file": file_to_json(new_file)}), 201
 
@@ -270,3 +302,64 @@ def get_all_files():
                 accessible_files.append(f)
 
     return jsonify([file_to_json(f) for f in accessible_files]), 200
+
+
+@files_bp.route('/search', methods=['GET'])
+@login_required
+def search_files():
+    """
+    通过FTS5搜索文件内容和文件名，并返回带有上下文片段的结果。
+    """
+    query_str = request.args.get('q', '')
+    if not query_str:
+        return jsonify({"error": "请输入搜索关键词"}), 400
+
+    from sqlalchemy import text, column
+
+    # --- 1. 内容搜索 (FTS) ---
+    sql_fts = text("""
+        SELECT 
+            pf.*, 
+            snippet(file_contents_fts, 0, '<b>', '</b>', '...', 15) as snippet
+        FROM project_files pf
+        JOIN file_contents fc ON pf.id = fc.file_id
+        JOIN file_contents_fts fts ON fc.id = fts.content_rowid
+        WHERE fts.content MATCH :query
+        ORDER BY rank;
+    """)
+    content_results = db.session.query(ProjectFile, column("snippet")).from_statement(sql_fts).params(query=query_str).all()
+
+    # --- 2. 文件名搜索 (LIKE) ---
+    like_query = f"%{query_str}%"
+    filename_results = ProjectFile.query.filter(ProjectFile.original_name.like(like_query)).all()
+
+    # --- 3. 合并结果并去重 ---
+    merged_results = {}
+    # 首先添加内容搜索结果，它们有snippet
+    for file_record, snippet in content_results:
+        merged_results[file_record.id] = (file_record, snippet)
+    
+    # 然后添加文件名搜索结果，如果它们不存在于merged_results中
+    for file_record in filename_results:
+        if file_record.id not in merged_results:
+            merged_results[file_record.id] = (file_record, None) # 没有snippet
+
+    # --- 4. 权限过滤 ---
+    user = current_user
+    accessible_files_json = []
+    user_subproject_ids = [sp.id for sp in user.assigned_subprojects]
+    leader_project_ids = [p.id for p in user.projects]
+
+    for file_record, snippet in merged_results.values():
+        is_accessible = (
+            file_record.is_public or
+            user.role in [RoleEnum.SUPER, RoleEnum.ADMIN] or
+            file_record.upload_user_id == user.id or
+            (file_record.subproject_id and file_record.subproject_id in user_subproject_ids) or
+            (file_record.project_id and file_record.project_id in leader_project_ids)
+        )
+
+        if is_accessible:
+            accessible_files_json.append(file_to_json(file_record, snippet))
+
+    return jsonify(accessible_files_json), 200
