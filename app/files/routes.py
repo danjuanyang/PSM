@@ -19,6 +19,14 @@ from ..decorators import permission_required, log_activity
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip',
                       'rar'}
+MIME_TYPE_MAPPING = {
+    'doc': 'application/msword',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'pdf': 'application/pdf',
+    'xls': 'application/vnd.ms-excel',
+    'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'txt': 'text/plain'
+}
 
 
 def allowed_file(filename):
@@ -42,6 +50,15 @@ def extract_text_from_file(file_path, file_ext):
         elif file_ext == 'txt':
             with open(file_path, 'r', encoding='utf-8') as f:
                 text = f.read()
+        elif file_ext in ['xls', 'xlsx']:
+            import openpyxl
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                for row in ws.rows:
+                    row_text = ' '.join(str(cell.value) for cell in row if cell.value is not None)
+                    if row_text.strip():
+                        text += row_text + '\n'
     except Exception as e:
         current_app.logger.error(f"Error extracting text from {file_path}: {e}")
     return text
@@ -153,7 +170,9 @@ def upload_file_for_task(task_id):
         # 提取文件内容并存储
         extracted_text = extract_text_from_file(file_path, file_ext)
         if extracted_text:
-            file_content = FileContent(file_id=new_file.id, content=extracted_text)
+            # 规范化空白字符，以优化FTS搜索
+            processed_text = ' '.join(extracted_text.split())
+            file_content = FileContent(file_id=new_file.id, content=processed_text)
             db.session.add(file_content)
             db.session.commit()
             new_file.text_extracted = True
@@ -327,7 +346,11 @@ def search_files():
         WHERE fts.content MATCH :query
         ORDER BY rank;
     """)
-    content_results = db.session.query(ProjectFile, column("snippet")).from_statement(sql_fts).params(query=query_str).all()
+    # 确保查询字符串被正确引用，以避免FTS特殊字符的干扰
+    # 例如，搜索"3-5"时，FTS可能将"-"解释为操作符，导致"no such column: 5"错误
+    # 将查询字符串用双引号包裹，强制其作为字面量短语进行匹配
+    quoted_query_str = f'"{query_str}"'
+    content_results = db.session.query(ProjectFile, column("snippet")).from_statement(sql_fts).params(query=quoted_query_str).all()
 
     # --- 2. 文件名搜索 (LIKE) ---
     like_query = f"%{query_str}%"
