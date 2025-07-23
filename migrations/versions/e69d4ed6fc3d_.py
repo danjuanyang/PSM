@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: 2adad6a210b5
+Revision ID: e69d4ed6fc3d
 Revises: 
-Create Date: 2025-06-18 09:34:09.179723
+Create Date: 2025-07-23 13:18:31.342269
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '2adad6a210b5'
+revision = 'e69d4ed6fc3d'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -69,6 +69,23 @@ def upgrade():
         batch_op.create_index('idx_ai_conversations_updated_at', ['updated_at'], unique=False)
         batch_op.create_index('idx_ai_conversations_user_id', ['user_id'], unique=False)
 
+    op.create_table('alerts',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('message', sa.String(length=512), nullable=False),
+    sa.Column('alert_type', sa.String(length=50), nullable=False),
+    sa.Column('related_key', sa.String(length=100), nullable=False),
+    sa.Column('related_url', sa.String(length=255), nullable=True),
+    sa.Column('is_read', sa.Boolean(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_alerts_user_id_users'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_alerts')),
+    sa.UniqueConstraint('related_key', name=op.f('uq_alerts_related_key'))
+    )
+    with op.batch_alter_table('alerts', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_alerts_is_read'), ['is_read'], unique=False)
+        batch_op.create_index(batch_op.f('ix_alerts_user_id'), ['user_id'], unique=False)
+
     op.create_table('announcements',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('created_by', sa.Integer(), nullable=True),
@@ -112,6 +129,7 @@ def upgrade():
     op.create_table('trainings',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('trainer_id', sa.Integer(), nullable=False),
+    sa.Column('assignee_id', sa.Integer(), nullable=True),
     sa.Column('training_month', sa.String(length=7), nullable=False, comment="格式: 'YYYY-MM'"),
     sa.Column('title', sa.String(length=100), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
@@ -119,6 +137,7 @@ def upgrade():
     sa.Column('material_path', sa.String(length=255), nullable=True),
     sa.Column('upload_time', sa.DateTime(), nullable=True),
     sa.Column('create_time', sa.DateTime(), nullable=True),
+    sa.ForeignKeyConstraint(['assignee_id'], ['users.id'], name=op.f('fk_trainings_assignee_id_users')),
     sa.ForeignKeyConstraint(['trainer_id'], ['users.id'], name=op.f('fk_trainings_trainer_id_users')),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_trainings'))
     )
@@ -222,7 +241,6 @@ def upgrade():
     op.create_table('subprojects',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('project_id', sa.Integer(), nullable=False),
-    sa.Column('employee_id', sa.Integer(), nullable=True),
     sa.Column('name', sa.String(length=100), nullable=False),
     sa.Column('description', sa.Text(), nullable=True),
     sa.Column('start_date', sa.DateTime(), nullable=True),
@@ -231,7 +249,6 @@ def upgrade():
     sa.Column('status', sa.Enum('PAUSED', 'PENDING', 'IN_PROGRESS', 'COMPLETED', name='statusenum'), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=True),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
-    sa.ForeignKeyConstraint(['employee_id'], ['users.id'], name=op.f('fk_subprojects_employee_id_users'), ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], name=op.f('fk_subprojects_project_id_projects'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_subprojects'))
     )
@@ -284,11 +301,20 @@ def upgrade():
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('comment_id', sa.Integer(), nullable=False),
     sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('parent_id', sa.Integer(), nullable=True),
     sa.Column('content', sa.Text(), nullable=False),
     sa.Column('create_time', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['comment_id'], ['comments.id'], name=op.f('fk_replies_comment_id_comments'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['parent_id'], ['replies.id'], name=op.f('fk_replies_parent_id_replies')),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_replies_user_id_users'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_replies'))
+    )
+    op.create_table('subproject_members',
+    sa.Column('subproject_id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['subproject_id'], ['subprojects.id'], name=op.f('fk_subproject_members_subproject_id_subprojects')),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_subproject_members_user_id_users')),
+    sa.PrimaryKeyConstraint('subproject_id', 'user_id', name=op.f('pk_subproject_members'))
     )
     op.create_table('stage_tasks',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -343,15 +369,24 @@ def upgrade():
     sa.PrimaryKeyConstraint('id', name=op.f('pk_file_contents')),
     sa.UniqueConstraint('file_id', name=op.f('uq_file_contents_file_id'))
     )
+    op.create_table('file_contents_fts',
+    sa.Column('rowid', sa.Integer(), nullable=False),
+    sa.Column('content', sa.Text(), nullable=True),
+    sa.Column('content_rowid', sa.Integer(), nullable=True),
+    sa.ForeignKeyConstraint(['content_rowid'], ['file_contents.id'], name=op.f('fk_file_contents_fts_content_rowid_file_contents')),
+    sa.PrimaryKeyConstraint('rowid', name=op.f('pk_file_contents_fts'))
+    )
     # ### end Alembic commands ###
 
 
 def downgrade():
     # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table('file_contents_fts')
     op.drop_table('file_contents')
     op.drop_table('task_progress_updates')
     op.drop_table('project_files')
     op.drop_table('stage_tasks')
+    op.drop_table('subproject_members')
     op.drop_table('replies')
     op.drop_table('project_stages')
     with op.batch_alter_table('ai_message_feedback', schema=None) as batch_op:
@@ -377,6 +412,11 @@ def downgrade():
     op.drop_table('report_clockins')
     op.drop_table('projects')
     op.drop_table('announcements')
+    with op.batch_alter_table('alerts', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_alerts_user_id'))
+        batch_op.drop_index(batch_op.f('ix_alerts_is_read'))
+
+    op.drop_table('alerts')
     with op.batch_alter_table('ai_conversations', schema=None) as batch_op:
         batch_op.drop_index('idx_ai_conversations_user_id')
         batch_op.drop_index('idx_ai_conversations_updated_at')

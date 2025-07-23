@@ -13,12 +13,15 @@ from werkzeug.utils import secure_filename
 
 from . import files_bp
 from .. import db
-from ..models import ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User, FileContent, FileContentFts
+from ..models import ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User, FileContent, Training
 from ..decorators import permission_required, log_activity
 
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip',
                       'rar'}
+# 增加对PDF的特殊允许列表
+ALLOWED_TRAINING_EXTENSIONS = {'pdf'}
+
 MIME_TYPE_MAPPING = {
     'doc': 'application/msword',
     'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -29,10 +32,10 @@ MIME_TYPE_MAPPING = {
 }
 
 
-def allowed_file(filename):
+def allowed_file(filename, allowed_extensions=ALLOWED_EXTENSIONS):
     """检查文件扩展名是否在允许列表中"""
     return '.' in filename and \
-        filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+        filename.rsplit('.', 1)[1].lower() in allowed_extensions
 
 
 def extract_text_from_file(file_path, file_ext):
@@ -115,6 +118,39 @@ def can_access_file(user, file_record):
             return True
 
     return False
+
+
+@files_bp.route('/upload/training/<int:id>', methods=['POST'])
+@login_required
+def upload_training_material(id):
+    """为培训上传材料"""
+    training = Training.query.get_or_404(id)
+    # 权限检查：只有指定的培训师或被分配者可以上传
+    if not (current_user.id == training.trainer_id or current_user.id == training.assignee_id):
+        return jsonify({'message': '只有指定的培训师或被分配者才能上传材料.'}), 403
+
+    if 'file' not in request.files:
+        return jsonify({'message': '无文件部分'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'message': '没有选定的文件'}), 400
+
+    if file and allowed_file(file.filename, ALLOWED_TRAINING_EXTENSIONS):
+        filename = secure_filename(file.filename)
+        # 按模块/年份/月份分桶
+        upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'training')
+        os.makedirs(upload_folder, exist_ok=True)
+
+        file_path = os.path.join(upload_folder, filename)
+        file.save(file_path)
+
+        training.material_path = file_path
+        training.upload_time = datetime.now()
+        training.status = 'completed'
+        db.session.commit()
+        return jsonify({'message': '文件上传成功。'})
+    else:
+        return jsonify({'message': '不允许的文件类型，仅支持PDF。'}), 400
 
 
 @files_bp.route('/tasks/<int:task_id>/upload', methods=['POST'])

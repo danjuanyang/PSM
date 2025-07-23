@@ -339,6 +339,7 @@ class Training(db.Model):
     __tablename__ = 'trainings'
     id = db.Column(db.Integer, primary_key=True)
     trainer_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    assignee_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True) # 新增：被分配者
     training_month = db.Column(db.String(7), nullable=False, comment="格式: 'YYYY-MM'")
     title = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
@@ -347,8 +348,9 @@ class Training(db.Model):
     upload_time = db.Column(db.DateTime)
     create_time = db.Column(db.DateTime, default=datetime.now)
 
-    trainer = db.relationship('User', backref='trainings')
-    comments = db.relationship('Comment', back_populates='training', lazy='dynamic', cascade='all, delete-orphan')
+    trainer = db.relationship('User', foreign_keys=[trainer_id], backref='created_trainings')
+    assignee = db.relationship('User', foreign_keys=[assignee_id], backref='assigned_trainings') # 新增：关系
+    comments = db.relationship('Comment', back_populates='training', cascade='all, delete-orphan')
 
 
 class Comment(db.Model):
@@ -361,7 +363,7 @@ class Comment(db.Model):
 
     training = db.relationship('Training', back_populates='comments')
     user = db.relationship('User', backref='comments')
-    replies = db.relationship('Reply', back_populates='comment', lazy='dynamic', cascade='all, delete-orphan')
+    replies = db.relationship('Reply', back_populates='comment', cascade='all, delete-orphan')
 
 
 class Reply(db.Model):
@@ -369,11 +371,13 @@ class Reply(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     comment_id = db.Column(db.Integer, db.ForeignKey('comments.id', ondelete='CASCADE'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    parent_id = db.Column(db.Integer, db.ForeignKey('replies.id'), nullable=True)  # 新增, 用于回复的回复
     content = db.Column(db.Text, nullable=False)
     create_time = db.Column(db.DateTime, default=datetime.now)
 
     comment = db.relationship('Comment', back_populates='replies')
     user = db.relationship('User', backref='replies')
+    parent = db.relationship('Reply', remote_side=[id], backref='child_replies')
 
 
 # ------------------- 用户追踪与日志 (Tracking & Logging Models) -------------------

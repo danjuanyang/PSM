@@ -37,6 +37,8 @@ PERMISSIONS = [
     # 公告权限
     {'name': 'manage_announcements', 'description': '发布和管理公告'},
     {'name': 'view_announcement_stats', 'description': '查看公告阅读统计'},
+    # 培训权限
+    {'name': 'training_manage', 'description': '培训管理'},
 ]
 
 # --- 定义各角色的默认权限 ---
@@ -66,6 +68,7 @@ ROLE_DEFAULT_PERMISSIONS = {
         # 公告权限
         'manage_announcements',
         'view_announcement_stats',
+        'training_manage',
     ],
     RoleEnum.LEADER: [
         'view_users',
