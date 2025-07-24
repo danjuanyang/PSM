@@ -1,25 +1,26 @@
 # /app/training/routes.py
 import os
 
-from flask import request, jsonify, current_app, send_from_directory
+from flask import request, jsonify, current_app, send_from_directory, send_file, g
 from flask_login import login_required, current_user
+from sqlalchemy.orm import joinedload
 
 from .. import db
+from ..decorators import permission_required, log_activity
 from ..models import Training, Comment, Reply
 from . import training_bp
-from ..decorators import permission_required
+from ..utils.preview import generate_file_preview
 
 
 # 1. 获取所有培训
 @training_bp.route('', methods=['GET'])
 @login_required
 def get_trainings():
-    # 简化查询，依赖懒加载和序列化时的安全检查
     trainings = Training.query.order_by(Training.training_month.desc()).all()
-
     return jsonify([{
         'id': t.id,
         'title': t.title,
+        'description': t.description,  # 添加 description
         'training_month': t.training_month,
         'trainer': t.trainer.username if t.trainer else None,
         'status': t.status,
@@ -33,23 +34,22 @@ def get_trainings():
 # 2. 创建新培训
 @training_bp.route('/', methods=['POST'])
 @login_required
+@log_activity('创建培训', '{username}创建培训')
 @permission_required('training_manage')
 def create_training():
+    g.log_info = {'useername': current_user}
     data = request.get_json()
-    training_month = data.get('training_month')
-    assignee_id = data.get('assignee_id')
-
-    if not all([training_month, assignee_id, data.get('title')]):
+    if not all([data.get('training_month'), data.get('assignee_id'), data.get('title')]):
         return jsonify({'message': '缺少必要的字段（月份、标题、分配用户）。'}), 400
 
-    if Training.query.filter_by(training_month=training_month).first():
+    if Training.query.filter_by(training_month=data['training_month']).first():
         return jsonify({'message': '本月已经分配了培训。'}), 400
 
     new_training = Training(
-        title=data.get('title'),
-        description=data.get('description'),
-        training_month=training_month,
-        assignee_id=assignee_id,
+        title=data['title'],
+        description=data.get('description'),  # 添加 description
+        training_month=data['training_month'],
+        assignee_id=data['assignee_id'],
         trainer_id=current_user.id,
         status='pending'
     )
@@ -62,21 +62,33 @@ def create_training():
 @training_bp.route('/<int:id>', methods=['GET'])
 @login_required
 def get_training_details(id):
-    # 使用最简单的查询，让懒加载处理关系，并在序列化时进行安全检查
-    training = Training.query.get_or_404(id)
+    training = Training.query.options(
+        joinedload(Training.comments).joinedload(Comment.user),
+        joinedload(Training.comments).joinedload(Comment.replies).joinedload(Reply.user)
+    ).get_or_404(id)
 
-    comments_data = [{
-        'id': c.id,
-        'content': c.content,
-        'user': c.user.username if c.user else None,
-        'create_time': c.create_time.isoformat(),
-        'replies': [{
-            'id': r.id,
-            'content': r.content,
-            'user': r.user.username if r.user else None,
-            'create_time': r.create_time.isoformat()
-        } for r in c.replies]
-    } for c in training.comments]
+    def serialize_reply(reply):
+        return {
+            'id': reply.id,
+            'content': reply.content,
+            'create_time': reply.create_time.isoformat(),
+            'user': {
+                'id': reply.user.id,
+                'username': reply.user.username
+            } if reply.user else None
+        }
+
+    def serialize_comment(comment):
+        return {
+            'id': comment.id,
+            'content': comment.content,
+            'create_time': comment.create_time.isoformat(),
+            'user': {
+                'id': comment.user.id,
+                'username': comment.user.username
+            } if comment.user else None,
+            'replies': [serialize_reply(r) for r in comment.replies]
+        }
 
     return jsonify({
         'id': training.id,
@@ -89,22 +101,22 @@ def get_training_details(id):
         'status': training.status,
         'file_path': training.material_path,
         'file_name': os.path.basename(training.material_path) if training.material_path else None,
-        'comments': comments_data
+        'comments': [serialize_comment(c) for c in training.comments]
     })
 
 
 # 4. 更新培训
 @training_bp.route('/<int:id>', methods=['PUT'])
 @login_required
+@log_activity('更新培训', '{username}更新了培训')
 @permission_required('training_manage')
 def update_training(id):
+    g.log_info = {'useername': current_user}
     training = Training.query.get_or_404(id)
     data = request.get_json()
-
     training.title = data.get('title', training.title)
-    training.description = data.get('description', training.description)
+    training.description = data.get('description', training.description)  # 添加 description
     training.assignee_id = data.get('assignee_id', training.assignee_id)
-
     db.session.commit()
     return jsonify({'message': '训练已成功更新。'})
 
@@ -115,27 +127,53 @@ def update_training(id):
 @permission_required('training_manage')
 def delete_training(id):
     training = Training.query.get_or_404(id)
-    if training.material_path:
+    if training.material_path and os.path.exists(training.material_path):
         try:
             os.remove(training.material_path)
         except OSError as e:
-            current_app.logger.error(f"删除文件时出错{training.material_path}: {e}")
+            current_app.logger.error(f"删除文件时出错 {training.material_path}: {e}")
+
     db.session.delete(training)
     db.session.commit()
-    return jsonify({'message': '此培训已成功删除。'})
+    return jsonify({'message': '此培训已成功删除。'}), 200
 
 
-# 6. 下载/预览培训材料
+# 新增：允许被分配者更新描述
+@training_bp.route('/<int:id>/description', methods=['PUT'])
+@login_required
+def update_training_description(id):
+    training = Training.query.get_or_404(id)
+    if training.assignee_id != current_user.id:
+        return jsonify({'message': '您无权修改此培训的描述。'}), 403
+
+    data = request.get_json()
+    training.description = data.get('description')
+    db.session.commit()
+    return jsonify({'message': '描述更新成功。'})
+
+
+# 6. 预览培训材料
+@training_bp.route('/<int:id>/preview', methods=['GET'])
+@login_required
+def preview_material(id):
+    training = Training.query.get_or_404(id)
+    if not training.material_path or not os.path.exists(training.material_path):
+        return jsonify({'message': '没有可用的材料或文件不存在。'}), 404
+
+    # 统一使用通用的预览/发送函数
+    return generate_file_preview(training.material_path)
+
+
+# 下载
 @training_bp.route('/<int:id>/download', methods=['GET'])
 @login_required
 def download_material(id):
     training = Training.query.get_or_404(id)
-    if not training.material_path:
-        return jsonify({'message': '没有可用的材料'}), 404
+    if not training.material_path or not os.path.exists(training.material_path):
+        return jsonify({'message': '没有可用的材料或文件不存在。'}), 404
 
-    directory = os.path.dirname(training.material_path)
-    filename = os.path.basename(training.material_path)
-    return send_from_directory(directory, filename, as_attachment=True)
+    # 统一使用通用的预览/发送函数
+    return send_file(training.material_path, as_attachment=True)
 
 
 # 7. 添加评论
@@ -151,7 +189,7 @@ def add_comment(id):
     )
     db.session.add(comment)
     db.session.commit()
-    return jsonify({'message': 'Comment added.', 'comment_id': comment.id}), 201
+    return jsonify({'message': '添加了评论', 'comment_id': comment.id}), 201
 
 
 # 8. 回复评论
@@ -168,7 +206,7 @@ def add_reply(comment_id):
     )
     db.session.add(reply)
     db.session.commit()
-    return jsonify({'message': 'Reply added.', 'reply_id': reply.id}), 201
+    return jsonify({'message': '回复已添加', 'reply_id': reply.id}), 201
 
 
 # 9. 删除评论或回复
@@ -191,4 +229,4 @@ def delete_reply(reply_id):
         return jsonify({'message': '无权删除此回复.'}), 403
     db.session.delete(reply)
     db.session.commit()
-    return jsonify({'message': 'Reply deleted.'})
+    return jsonify({'message': '回复已删除。'})
