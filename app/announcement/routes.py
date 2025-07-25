@@ -201,7 +201,6 @@ def get_announcement_detail(announcement_id):
 
 
 # --- 统计与附件接口 ---
-
 @announcement_bp.route('/<int:announcement_id>/read-status', methods=['GET'])
 @login_required
 @log_activity('查看公告阅读状态统计', '{username}查看公告阅读状态统计')
@@ -212,7 +211,8 @@ def get_read_statistics(announcement_id):
     """
     g.log_info= {'username': current_user.username}
     announcement = Announcement.query.get_or_404(announcement_id)
-    all_users = User.query.all()
+    # 过滤掉role为super的用户
+    all_users = User.query.filter(User.role != RoleEnum.SUPER).all()
     read_statuses = {rs.user_id: rs for rs in announcement.read_statuses}
 
     read_users = []

@@ -161,6 +161,28 @@ def get_conversations():
     ]), 200
 
 
+@ai_bp.route('/conversations/<int:conv_id>', methods=['PUT'])
+@login_required
+def update_conversation(conv_id):
+    """更新对话标题。"""
+    conversation = AIConversation.query.filter_by(id=conv_id, user_id=current_user.id).first_or_404()
+    data = request.get_json()
+    new_title = data.get('title')
+
+    if not new_title:
+        return jsonify({"error": "标题不能为空"}), 400
+
+    conversation.title = new_title
+    conversation.updated_at = db.func.now()
+    db.session.commit()
+
+    return jsonify({
+        "id": conversation.id,
+        "title": conversation.title,
+        "updated_at": conversation.updated_at.isoformat()
+    }), 200
+
+
 @ai_bp.route('/conversations/<int:conv_id>', methods=['DELETE'])
 @login_required
 def delete_conversation(conv_id):

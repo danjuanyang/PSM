@@ -1,12 +1,12 @@
 # PSM/app/auth/routes.py
 import re
-
+from datetime import datetime
 from flask import request, jsonify, session, g
 from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
 from ..decorators import log_activity
-from ..models import User, RoleEnum, Permission, UserPermission, RolePermission
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession
 from .. import db, bcrypt
 
 
@@ -74,7 +74,20 @@ def login():
     """
     # 如果一个已登录用户尝试再次登录，先将他登出
     if current_user.is_authenticated:
+        # 先执行登出逻辑以关闭旧会话
+        session_id = session.get('user_session_id')
+        if session_id:
+            user_session = UserSession.query.get(session_id)
+            if user_session and user_session.is_active:
+                user_session.is_active = False
+                user_session.logout_time = datetime.now()
+                if user_session.login_time:
+                    duration = user_session.logout_time - user_session.login_time
+                    user_session.session_duration = int(duration.total_seconds())
+                db.session.commit()
         logout_user()
+        session.clear()
+
     if not request.is_json:
         return jsonify({"error": "请求必须是JSON格式", "code": "INVALID_REQUEST_FORMAT"}), 415
     data = request.get_json()
@@ -98,6 +111,25 @@ def login():
     # 验证通过，登录用户
     session.permanent = True
     login_user(user)
+
+    # 创建新的 UserSession 记录
+    try:
+        new_user_session = UserSession(
+            user_id=user.id,
+            ip_address=request.remote_addr,
+            user_agent=request.user_agent.string,
+            login_time=datetime.now()
+        )
+        db.session.add(new_user_session)
+        db.session.flush()  # 获取新会话的ID
+        session['user_session_id'] = new_user_session.id
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        # 在实践中，这里应该使用 app.logger.error()
+        print(f"Error creating user session: {e}")
+        return jsonify({"error": "创建用户会话失败"}), 500
+
     return jsonify({
         "message": "登录成功",
         "user": {
@@ -116,10 +148,22 @@ def logout():
     """
     用户登出API端点。
     """
-    # 在修饰器执行前，current_user是有效的。
-    # 修饰器会在 logout_user() 执行前捕获它。
     g.log_info = {'username': current_user.username}
+    
+    # 关闭 UserSession
+    session_id = session.get('user_session_id')
+    if session_id:
+        user_session = UserSession.query.get(session_id)
+        if user_session and user_session.is_active:
+            user_session.is_active = False
+            user_session.logout_time = datetime.now()
+            if user_session.login_time:
+                duration = user_session.logout_time - user_session.login_time
+                user_session.session_duration = int(duration.total_seconds())
+            db.session.commit()
+
     logout_user()
+    session.clear() # 清理所有会话数据
     return jsonify({"message": "登出成功"}), 200
 
 

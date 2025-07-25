@@ -414,6 +414,7 @@ class UserActivityLog(db.Model):
     timestamp = db.Column(db.DateTime, default=datetime.now)
     resource_type = db.Column(db.String(50))
     resource_id = db.Column(db.Integer)
+    module = db.Column(db.String(50), nullable=True, comment="前端模块名，例如 'ai', 'project'")
     user = db.relationship('User', backref='activity_logs')
     session = db.relationship('UserSession', backref='activity_logs')
 
