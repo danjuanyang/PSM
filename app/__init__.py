@@ -82,7 +82,6 @@ def create_app(config_name='default'):
     from .utils import utils_bp
     from .training import training_bp
 
-
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(project_bp)

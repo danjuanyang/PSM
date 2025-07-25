@@ -59,6 +59,9 @@ class User(UserMixin, db.Model):
     # 关系
     leader = db.relationship('User', remote_side=[id], backref='team_members')
     specific_permissions = db.relationship('UserPermission', back_populates='user', cascade='all, delete-orphan')
+    # AI API Key, one-to-one relationship
+    ai_api = db.relationship('AIApi', uselist=False, back_populates='user', cascade='all, delete-orphan')
+
 
     def set_password(self, password):
         self.password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -416,15 +419,22 @@ class UserActivityLog(db.Model):
 
 
 # ------------------- AI 功能模型 (AI Models) -------------------
+class SystemConfig(db.Model):
+    __tablename__ = 'system_configs'
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(64), unique=True, nullable=False, comment="配置项的键")
+    value = db.Column(db.String(255), comment="配置项的值")
+    description = db.Column(db.String(255), comment="配置描述")
+
 
 class AIApi(db.Model):
     __tablename__ = 'ai_api'
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    ai_model = db.Column(db.String(50))
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, unique=True)
+    ai_model = db.Column(db.String(50), default='deepseek-chat')
     api_key = db.Column(db.String(255), nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    user = db.relationship('User', backref=db.backref('ai_apis', lazy='dynamic', cascade='all, delete-orphan'))
+    user = db.relationship('User', back_populates='ai_api')
 
 
 class AIConversation(db.Model):
@@ -448,8 +458,10 @@ class AIMessage(db.Model):
     content = db.Column(db.Text, nullable=False)
     role = db.Column(db.String(10), nullable=False, comment="'user' or 'assistant'")
     created_at = db.Column(db.DateTime, default=datetime.now)
-    tokens_used = db.Column(db.Integer, default=0)
-    model_version = db.Column(db.String(50))
+    prompt_tokens = db.Column(db.Integer, nullable=True)
+    completion_tokens = db.Column(db.Integer, nullable=True)
+    total_tokens = db.Column(db.Integer, nullable=True)
+    model_version = db.Column(db.String(50), nullable=True)
 
     conversation = db.relationship('AIConversation', back_populates='messages')
     feedback = db.relationship('AIMessageFeedback', back_populates='message', lazy='dynamic',

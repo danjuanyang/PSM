@@ -5,7 +5,6 @@ from . import db
 from .models import Permission, RolePermission, RoleEnum, ProjectFile, FileContent
 from .files.routes import extract_text_from_file
 
-
 # --- 定义应用所需的所有权限 ---
 # 格式：{'name': '权限名称', 'description': '权限描述'}
 PERMISSIONS = [
@@ -39,6 +38,8 @@ PERMISSIONS = [
     {'name': 'view_announcement_stats', 'description': '查看公告阅读统计'},
     # 培训权限
     {'name': 'training_manage', 'description': '培训管理'},
+    # 其他权限
+    {'name': 'view_ai_setting', 'description': 'AI配置'}
 ]
 
 # --- 定义各角色的默认权限 ---
@@ -69,6 +70,8 @@ ROLE_DEFAULT_PERMISSIONS = {
         'manage_announcements',
         'view_announcement_stats',
         'training_manage',
+        # AI配置
+        'view_ai_setting'
     ],
     RoleEnum.LEADER: [
         'view_users',
@@ -157,10 +160,9 @@ def register_commands(app):
                         # 创建新记录
                         file_content = FileContent(file_id=project_file.id, content=extracted_text)
                         db.session.add(file_content)
-                    
+
                     project_file.text_extracted = True
                     db.session.add(project_file)
 
         db.session.commit()
         click.echo('索引建立完成。')
-
