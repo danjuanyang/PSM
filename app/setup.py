@@ -39,7 +39,9 @@ PERMISSIONS = [
     # 培训权限
     {'name': 'training_manage', 'description': '培训管理'},
     # 其他权限
-    {'name': 'view_ai_setting', 'description': 'AI配置'}
+    {'name': 'view_ai_setting', 'description': 'AI配置'},
+    # 用户活跃
+    {'name': 'view_user_activity', 'description': '查看用户活跃度'},
 ]
 
 # --- 定义各角色的默认权限 ---
@@ -71,7 +73,9 @@ ROLE_DEFAULT_PERMISSIONS = {
         'view_announcement_stats',
         'training_manage',
         # AI配置
-        'view_ai_setting'
+        'view_ai_setting',
+        # 用户活跃
+        'view_user_activity',
     ],
     RoleEnum.LEADER: [
         'view_users',

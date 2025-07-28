@@ -126,6 +126,17 @@ def reset_user_password(user_id):
     })
 
 
+@admin_bp.route('/users/list', methods=['GET'])
+@login_required
+def get_users_for_selection():
+    """
+    获取一个精简的用户列表 (id, username)，用于前端选择器。
+    - 始终排除 SUPER 用户。
+    """
+    users = User.query.filter(User.role != RoleEnum.SUPER).with_entities(User.id, User.username).all()
+    return jsonify([{'id': user.id, 'username': user.username} for user in users])
+
+
 # ------------------- 权限管理 API -------------------
 
 @admin_bp.route('/permissions', methods=['GET'])
