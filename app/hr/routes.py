@@ -320,3 +320,41 @@ def get_my_current_month_records():
         return jsonify([])
 
     return jsonify([clockin_detail_to_json(r) for r in records])
+
+
+@hr_bp.route('/clock-in/check', methods=['GET'])
+@login_required
+def check_clock_in_report():
+    """
+    检查当前用户在指定月份是否已提交过补卡报告。
+    如果已提交，则直接返回记录详情。
+    接收一个 'month' 查询参数, 格式为 'YYYY-MM'.
+    """
+    month_str = request.args.get('month')
+    if not month_str:
+        return jsonify({"error": "缺少 'month' 查询参数"}), 400
+
+    try:
+        year, month = map(int, month_str.split('-'))
+    except ValueError:
+        return jsonify({"error": "月份格式无效，请使用 'YYYY-MM' 格式"}), 400
+
+    # CORRECTED: Use the database-agnostic `extract` function for consistency and correctness.
+    records = ReportClockinDetail.query.join(ReportClockin).filter(
+        ReportClockin.employee_id == current_user.id,
+        db.extract('year', ReportClockin.report_date) == year,
+        db.extract('month', ReportClockin.report_date) == month
+    ).order_by(ReportClockinDetail.clockin_date).all()
+
+    if records:
+        # 如果记录存在，序列化并返回
+        return jsonify({
+            "exists": True,
+            "records": [clockin_detail_to_json(r) for r in records]
+        })
+    else:
+        # 如果记录不存在
+        return jsonify({
+            "exists": False,
+            "records": []
+        })
