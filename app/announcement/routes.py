@@ -80,9 +80,9 @@ def create_announcement():
     files = request.files.getlist('attachments')
     for file in files:
         if file and allowed_file(file.filename):
-            original_filename = secure_filename(file.filename)
-            file_ext = original_filename.rsplit('.', 1)[1].lower()
-            stored_filename = f"{uuid.uuid4()}.{file_ext}"
+            original_filename = file.filename  # 直接使用原始文件名
+            file_ext = original_filename.rsplit('.', 1)[1].lower() if '.' in original_filename else ''
+            stored_filename = f"{uuid.uuid4()}.{file_ext}" if file_ext else str(uuid.uuid4())
 
             # 使用分桶存储
             upload_folder = os.path.join(current_app.config['UPLOAD_FOLDER'], 'announcements', str(datetime.now().year),

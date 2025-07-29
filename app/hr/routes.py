@@ -4,7 +4,7 @@ from flask_login import current_user, login_required
 from sqlalchemy import extract, func
 from datetime import datetime, timedelta
 
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, joinedload
 
 from . import hr_bp
 from .. import db
@@ -339,22 +339,30 @@ def check_clock_in_report():
     except ValueError:
         return jsonify({"error": "月份格式无效，请使用 'YYYY-MM' 格式"}), 400
 
-    # CORRECTED: Use the database-agnostic `extract` function for consistency and correctness.
-    records = ReportClockinDetail.query.join(ReportClockin).filter(
+    # 1. 首先，直接检查 ReportClockin 表，判断报告本身是否存在
+    report = ReportClockin.query.filter(
         ReportClockin.employee_id == current_user.id,
         db.extract('year', ReportClockin.report_date) == year,
         db.extract('month', ReportClockin.report_date) == month
-    ).order_by(ReportClockinDetail.clockin_date).all()
+    ).first()
 
-    if records:
-        # 如果记录存在，序列化并返回
-        return jsonify({
-            "exists": True,
-            "records": [clockin_detail_to_json(r) for r in records]
-        })
-    else:
-        # 如果记录不存在
+    # 2. 如果报告不存在，直接返回
+    if not report:
         return jsonify({
             "exists": False,
             "records": []
         })
+
+    # 3. 如果报告存在，则获取其所有详细记录
+    #    使用 joinedload 预加载关联数据 (执行JOIN查询), 避免 N+1 查询问题，并确保数据完整性
+    records = ReportClockinDetail.query.options(
+        joinedload(ReportClockinDetail.report).joinedload(ReportClockin.employee)
+    ).filter(
+        ReportClockinDetail.report_id == report.id
+    ).order_by(ReportClockinDetail.clockin_date).all()
+
+    # 4. 返回结果
+    return jsonify({
+        "exists": True,
+        "records": [clockin_detail_to_json(r) for r in records]
+    })

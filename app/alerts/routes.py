@@ -1,15 +1,13 @@
-#app/alert/routes.py
-
+# app/alert/routes.py
 from flask import Blueprint, jsonify, g
 from flask_login import current_user, login_required
 from datetime import datetime, timedelta
-from sqlalchemy import and_
-
+from sqlalchemy import and_, func, extract
 from . import alert_bp
 from .. import db
 from ..decorators import log_activity
 from ..models import Alert, User, Project, Subproject, ProjectStage, StageTask, Announcement, AnnouncementReadStatus, \
-    ProjectFile
+    ProjectFile, Training, ReportClockin
 from ..models import StatusEnum
 
 
@@ -32,48 +30,71 @@ def _create_alert_if_not_exists(user, message, alert_type, related_key, related_
 
 
 def generate_system_alerts_for_user(user):
-    """为指定用户生成所有系统性的、基于检查的通知"""
+    """
+    为指定用户生成并协调所有系统性通知。
+    该函数会创建新提醒，并自动将已解决的旧提醒标记为已读。
+    """
     today = datetime.now().date()
+    
+    # 存储当前检查周期中所有有效的提醒key
+    valid_alert_keys = set()
 
-    # 规则1: 任务进度100%但未上传文件
-    completed_tasks = StageTask.query.filter(
-        StageTask.progress == 100,
-        StageTask.stage.has(ProjectStage.subproject.has(Subproject.employee_id == user.id))
-    ).outerjoin(ProjectFile, StageTask.id == ProjectFile.task_id).group_by(StageTask.id).having(
-        db.func.count(ProjectFile.id) == 0).all()
-
-    for task in completed_tasks:
-        _create_alert_if_not_exists(
-            user,
-            f"任务 \"{task.name}\" 已完成，但尚未上传任何相关文件。",
-            'task_no_file',
-            f'task_no_file_{task.id}'
-        )
-
-    # 规则2: 项目/子项目/阶段到期提醒
-    deadlines = [15, 7, 3, 0]  # 提醒天数
-    items_to_check = [
-        ('项目', Project.query.filter(Project.employee_id == user.id, Project.status != StatusEnum.COMPLETED).all()),
-        ('子项目',
-         Subproject.query.filter(Subproject.employee_id == user.id, Subproject.status != StatusEnum.COMPLETED).all()),
-        ('阶段', ProjectStage.query.join(Subproject).filter(Subproject.employee_id == user.id,
-                                                            ProjectStage.status != StatusEnum.COMPLETED).all())
+    # 获取此函数管理的所有类型的、当前未读的提醒
+    managed_alert_types = [
+        'project_deadline', 'subproject_deadline', 'stage_deadline', 'task_deadline',
+        'task_no_file', 'unread_announcement', 'training_no_material', 'hr_no_clockin'
     ]
-    for item_type, items in items_to_check:
-        for item in items:
-            if not item.deadline: continue
-            days_left = (item.deadline.date() - today).days
-            for d in deadlines:
-                if days_left <= d:
-                    key_part = f'overdue_{item.id}' if days_left < 0 else f'deadline_{d}_days_{item.id}'
-                    msg = f'{item_type} "{item.name}" 已逾期 {-days_left} 天。' if days_left < 0 else f'{item_type} "{item.name}" 将在 {days_left} 天后到期。'
+    existing_unread_alerts = Alert.query.filter(
+        Alert.user_id == user.id,
+        Alert.is_read == False,
+        Alert.alert_type.in_(managed_alert_types)
+    ).all()
+    existing_unread_keys = {alert.related_key for alert in existing_unread_alerts}
 
-                    _create_alert_if_not_exists(
-                        user, msg, f'{item_type}_deadline', f'{item_type}_{key_part}'
-                    )
-                    break  # 匹配到最紧急的提醒后即停止
+    # --- 检查规则并填充 valid_alert_keys ---
 
-    # 规则4: 公告未读提醒
+    # 规则1: 项目和子项目到期提醒
+    for project in Project.query.filter(Project.employee_id == user.id, Project.status != StatusEnum.COMPLETED).all():
+        if project.deadline and (project.deadline.date() - today).days <= 7:
+            key = f'project_deadline_{project.id}'
+            valid_alert_keys.add(key)
+            _create_alert_if_not_exists(user, f"项目 \"{project.name}\" 将在7天内到期。", 'project_deadline', key, f'/project/detail/{project.id}')
+
+    for subproject in Subproject.query.filter(Subproject.members.any(id=user.id), Subproject.status != StatusEnum.COMPLETED).all():
+        if subproject.deadline and (subproject.deadline.date() - today).days <= 7:
+            key = f'subproject_deadline_{subproject.id}'
+            valid_alert_keys.add(key)
+            # 指向父项目的详情页
+            _create_alert_if_not_exists(user, f"子项目 \"{subproject.name}\" 将在7天内到期。", 'subproject_deadline', key, f'/project/detail/{subproject.project_id}')
+
+    # 规则2: 阶段到期提醒
+    for stage in ProjectStage.query.join(Subproject).filter(Subproject.members.any(id=user.id), ProjectStage.status != StatusEnum.COMPLETED).all():
+        if stage.end_date and (stage.end_date - today).days <= 3:
+            key = f'stage_deadline_{stage.id}'
+            valid_alert_keys.add(key)
+            # 指向父项目的详情页
+            _create_alert_if_not_exists(user, f"阶段 \"{stage.name}\" 将在3天内到期。", 'stage_deadline', key, f'/project/detail/{stage.subproject.project_id}')
+
+    # 规则3: 任务到期提醒
+    for task in StageTask.query.join(ProjectStage).join(Subproject).filter(Subproject.members.any(id=user.id), StageTask.status != StatusEnum.COMPLETED).all():
+        if task.due_date and (task.due_date - today).days <= 1:
+            key = f'task_deadline_{task.id}'
+            valid_alert_keys.add(key)
+            # 指向父项目的详情页
+            _create_alert_if_not_exists(user, f"任务 \"{task.name}\" 将在1天内到期。", 'task_deadline', key, f'/project/detail/{task.stage.subproject.project_id}')
+
+    # 规则4: 任务进度100%但未上传文件
+    completed_tasks_without_files = StageTask.query.filter(
+        StageTask.progress == 100,
+        StageTask.stage.has(ProjectStage.subproject.has(Subproject.members.any(id=user.id)))
+    ).outerjoin(ProjectFile, StageTask.id == ProjectFile.task_id).group_by(StageTask.id).having(func.count(ProjectFile.id) == 0).all()
+    for task in completed_tasks_without_files:
+        key = f'task_no_file_{task.id}'
+        valid_alert_keys.add(key)
+        # 指向父项目的详情页
+        _create_alert_if_not_exists(user, f"任务 \"{task.name}\" 已完成，但尚未上传任何相关文件。", 'task_no_file', key, f'/project/detail/{task.stage.subproject.project_id}')
+
+    # 规则5: 未读公告提醒
     unread_announcements = Announcement.query.filter(
         Announcement.is_active == True,
         ~Announcement.read_statuses.any(and_(
@@ -82,10 +103,41 @@ def generate_system_alerts_for_user(user):
         ))
     ).all()
     for ann in unread_announcements:
-        _create_alert_if_not_exists(
-            user, f"您有一条新的公告 \"{ann.title}\" 待查看。", 'unread_announcement',
-            f'unread_announcement_{ann.id}_user_{user.id}'
-        )
+        key = f'unread_announcement_{ann.id}_user_{user.id}'
+        valid_alert_keys.add(key)
+        # 指向公告列表页
+        _create_alert_if_not_exists(user, f"您有一条新的公告 \"{ann.title}\" 待查看。", 'unread_announcement', key, '/announcement/index')
+
+    # 规则6: 培训无课件提醒
+    assigned_trainings_without_material = Training.query.filter(Training.assignee_id == user.id, Training.material_path == None).all()
+    for training in assigned_trainings_without_material:
+        key = f'training_no_material_{training.id}'
+        valid_alert_keys.add(key)
+        # 指向培训列表页
+        _create_alert_if_not_exists(user, f"您被分配的培训 \"{training.title}\" 尚未上传课件。", 'training_no_material', key, '/training/index')
+
+    # 规则7: 未提交补卡提醒
+    if today.day > 25:
+        this_month = today.replace(day=1)
+        has_submitted_clockin = ReportClockin.query.filter(
+            ReportClockin.employee_id == user.id,
+            extract('year', ReportClockin.report_date) == this_month.year,
+            extract('month', ReportClockin.report_date) == this_month.month
+        ).first()
+        if not has_submitted_clockin:
+            key = f'hr_no_clockin_{user.id}_{this_month.strftime("%Y-%m")}'
+            valid_alert_keys.add(key)
+            # 指向补卡填报页
+            _create_alert_if_not_exists(user, f"您尚未提交本月的补卡申请。", 'hr_no_clockin', key, '/hr/clock-in-apply')
+
+    # --- 协调：将已解决的提醒标记为已读 ---
+    resolved_keys = existing_unread_keys - valid_alert_keys
+    if resolved_keys:
+        Alert.query.filter(
+            Alert.user_id == user.id,
+            Alert.is_read == False,
+            Alert.related_key.in_(resolved_keys)
+        ).update({'is_read': True}, synchronize_session=False)
 
     db.session.commit()
 
@@ -107,12 +159,13 @@ def get_user_alerts():
         .order_by(Alert.created_at.desc()) \
         .all()
 
-    return jsonify([{
-        'id': alert.id,
-        'message': alert.message,
-        'related_url': alert.related_url,
-        'created_at': alert.created_at.isoformat()
-    } for alert in alerts])
+    return jsonify([
+        {
+            'id': alert.id,
+            'message': alert.message,
+            'related_url': alert.related_url,
+            'created_at': alert.created_at.isoformat()
+        } for alert in alerts])
 
 
 @alert_bp.route('/<int:alert_id>/mark-as-read', methods=['POST'])
@@ -137,4 +190,17 @@ def mark_all_as_read():
     Alert.query.filter_by(user_id=current_user.id, is_read=False).update({'is_read': True})
     db.session.commit()
     return jsonify({"message": "所有通知已标记为已读"}), 200
+
+
+@alert_bp.route('/test-generation', methods=['GET'])
+@login_required
+def test_alert_generation():
+    """
+    一个仅用于测试的端点，手动为当前用户触发通知生成。
+    """
+    if not current_user.role == 'SUPER': # 假设 SUPER 是超级管理员
+        return jsonify({"error": "仅超级管理员可访问"}), 403
+
+    generate_system_alerts_for_user(current_user)
+    return jsonify({"message": "已为当前用户触发通知生成检查。"}), 200
 

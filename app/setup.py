@@ -2,7 +2,8 @@
 import click
 import os
 from . import db
-from .models import Permission, RolePermission, RoleEnum, ProjectFile, FileContent
+from .alerts.routes import generate_system_alerts_for_user
+from .models import Permission, RolePermission, RoleEnum, ProjectFile, FileContent, User
 from .files.routes import extract_text_from_file
 
 # --- 定义应用所需的所有权限 ---
@@ -170,3 +171,13 @@ def register_commands(app):
 
         db.session.commit()
         click.echo('索引建立完成。')
+
+    @app.cli.command('generate-alerts')
+    def generate_alerts_command():
+        """扫描所有用户并生成系统提醒。"""
+        click.echo('开始为所有用户生成提醒...')
+        users = User.query.all()
+        with click.progressbar(users) as bar:
+            for user in bar:
+                generate_system_alerts_for_user(user)
+        click.echo('所有用户的提醒生成完毕。')
