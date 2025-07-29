@@ -1,7 +1,8 @@
 # PSM/app/auth/routes.py
 import re
+import os
 from datetime import datetime
-from flask import request, jsonify, session, g
+from flask import request, jsonify, session, g, current_app
 from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
@@ -17,6 +18,8 @@ def register():
     用户注册API端点。
     接收JSON格式的用户数据并创建新用户。
     """
+    if not current_app.config['ALLOW_REGISTRATION']:
+        return jsonify({"error": "注册功能当前已关闭", "code": "REGISTRATION_DISABLED"}), 403
     # 1. 检查是否是JSON请求
     if not request.is_json:
         return jsonify({"error": "请求必须是JSON格式"}), 415
@@ -331,3 +334,46 @@ def change_email():
             "email": current_user.email
         }
     }), 200
+
+
+@auth_bp.route('/settings/registration', methods=['GET', 'POST'])
+@login_required
+def registration_settings():
+    if current_user.role != RoleEnum.ADMIN:
+        return jsonify({"error": "权限不足"}), 403
+
+    if request.method == 'GET':
+        return jsonify({"allow_registration": current_app.config['ALLOW_REGISTRATION']})
+
+    if request.method == 'POST':
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "请求必须是JSON格式"}), 415
+        
+        allow = data.get('allow_registration')
+        if not isinstance(allow, bool):
+            return jsonify({"error": "无效的数据格式"}), 400
+
+        # 这部分比较棘手，因为我们不能直接修改app.config
+        # 最好的方法是存储在数据库或一个配置文件中
+        # 这里为了简单，我们直接修改.env文件
+        # 注意：在生产环境中，这通常不是一个好主意
+        env_path = os.path.join(os.path.dirname(current_app.root_path), '.env')
+        if os.path.exists(env_path):
+            with open(env_path, 'r') as f:
+                lines = f.readlines()
+            
+            with open(env_path, 'w') as f:
+                found = False
+                for line in lines:
+                    if line.strip().startswith('ALLOW_REGISTRATION'):
+                        f.write(f'ALLOW_REGISTRATION={allow}\n')
+                        found = True
+                    else:
+                        f.write(line)
+                if not found:
+                    f.write(f'\nALLOW_REGISTRATION={allow}\n')
+            current_app.config['ALLOW_REGISTRATION'] = allow
+            return jsonify({"message": "设置已更新"}), 200
+        else:
+            return jsonify({"error": ".env 文件未找到"}), 500

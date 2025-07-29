@@ -21,6 +21,7 @@ class Config:
     lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME', 3600))
     # lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME'))
     PERMANENT_SESSION_LIFETIME = timedelta(seconds=lifetime_seconds)
+    ALLOW_REGISTRATION = os.environ.get('ALLOW_REGISTRATION', 'False').lower() in ('true', '1', 't')
 
     # 数据库配置
     SQLALCHEMY_TRACK_MODIFICATIONS = False

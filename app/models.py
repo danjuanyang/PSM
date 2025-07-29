@@ -282,10 +282,15 @@ class ReportClockin(db.Model):
     details = db.relationship('ReportClockinDetail', back_populates='report', cascade='all, delete-orphan')
 
 
+class RequestTypeEnum(PyEnum):
+    LEAVE = 'leave'      # 请假
+    CLOCK_IN = 'clock_in'  # 补卡
+
 class ReportClockinDetail(db.Model):
     __tablename__ = 'report_clockin_details'
     id = db.Column(db.Integer, primary_key=True)
     report_id = db.Column(db.Integer, db.ForeignKey('report_clockins.id', ondelete='CASCADE'), nullable=False)
+    request_type = db.Column(db.Enum(RequestTypeEnum), nullable=False, default=RequestTypeEnum.CLOCK_IN)
     clockin_date = db.Column(db.Date, nullable=False)
     weekday = db.Column(db.String(20))
     remarks = db.Column(db.String(200))

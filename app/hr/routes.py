@@ -243,59 +243,52 @@ def get_task_progress_updates():
 
 
 # --- 3. 新增：补卡填报接口 ---
-@hr_bp.route('/clock-in-records', methods=['POST'])
+@hr_bp.route('/leave-or-clock-in', methods=['POST'])
 @login_required
-@log_activity('提交补卡记录', action_detail_template='{username}提交了补卡记录')
-def submit_clock_in_record():
-    """
-    员工提交一个月度的补卡记录.
-    """
+@log_activity('提交请假或补卡', action_detail_template='{username} 提交了申请')
+def submit_leave_or_clock_in():
     data = request.get_json()
-    if not data or 'year' not in data or 'month' not in data or 'details' not in data:
+    if not data or 'dates' not in data or 'reason' not in data:
         return jsonify({"error": "请求数据不完整"}), 400
 
-    year = data['year']
-    month = data['month']
-    details = data['details']
+    dates = data['dates']
+    reason = data['reason']
     g.log_info = {"username": current_user.username}
-    # 检查本月是否已提交过
-    existing_report = ReportClockin.query.filter(
+
+    # 获取或创建当月的ReportClockin
+    # 这部分逻辑可以保留，以便按月组织数据
+    report_date = datetime.strptime(dates[0], '%Y-%m-%d').date()
+    report = ReportClockin.query.filter(
         ReportClockin.employee_id == current_user.id,
-        db.extract('year', ReportClockin.report_date) == year,
-        db.extract('month', ReportClockin.report_date) == month
+        db.extract('year', ReportClockin.report_date) == report_date.year,
+        db.extract('month', ReportClockin.report_date) == report_date.month
     ).first()
 
-    if existing_report:
-        return jsonify({"error": f"{year}年{month}月的补卡记录已提交，不可重复提交。"}), 409
+    if not report:
+        report = ReportClockin(
+            employee_id=current_user.id,
+            report_date=report_date.replace(day=1)
+        )
+        db.session.add(report)
+        db.session.flush()
 
-    # 创建主记录
-    new_report = ReportClockin(
-        employee_id=current_user.id,
-        report_date=datetime(year, month, 1)
-    )
-    db.session.add(new_report)
-    db.session.flush()
+    for date_str in dates:
+        clockin_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        weekday = clockin_date.weekday() # Monday is 0 and Sunday is 6
 
-    # 创建详细记录
-    for detail in details:
-        clockin_date_str = detail.get('date')
-        remarks = detail.get('remarks')
-        if not clockin_date_str or not remarks:
-            continue
-
-        clockin_date = datetime.strptime(clockin_date_str, '%Y-%m-%d').date()
-        weekday_str = clockin_date.strftime('%A')
+        request_type = 'leave' if weekday < 5 else 'clock_in'
 
         new_detail = ReportClockinDetail(
-            report_id=new_report.id,
+            report_id=report.id,
             clockin_date=clockin_date,
-            weekday=weekday_str,
-            remarks=remarks
+            weekday=clockin_date.strftime('%A'),
+            remarks=reason,
+            request_type=request_type
         )
         db.session.add(new_detail)
 
     db.session.commit()
-    return jsonify({"message": "补卡记录提交成功"}), 201
+    return jsonify({"message": "申请提交成功"}), 201
 
 
 # --- 新增：员工查询自己当月的提交记录 ---
