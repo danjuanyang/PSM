@@ -337,15 +337,19 @@ def change_email():
 
 
 @auth_bp.route('/settings/registration', methods=['GET', 'POST'])
-@login_required
 def registration_settings():
-    if current_user.role != RoleEnum.ADMIN:
-        return jsonify({"error": "权限不足"}), 403
-
     if request.method == 'GET':
-        return jsonify({"allow_registration": current_app.config['ALLOW_REGISTRATION']})
+        response = jsonify({"allow_registration": current_app.config['ALLOW_REGISTRATION']})
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
 
     if request.method == 'POST':
+        # POST请求需要管理员权限
+        if not current_user.is_authenticated or current_user.role != RoleEnum.ADMIN:
+            return jsonify({"error": "权限不足"}), 403
+
         data = request.get_json()
         if data is None:
             return jsonify({"error": "请求必须是JSON格式"}), 415
@@ -367,12 +371,12 @@ def registration_settings():
                 found = False
                 for line in lines:
                     if line.strip().startswith('ALLOW_REGISTRATION'):
-                        f.write(f'ALLOW_REGISTRATION={allow}\n')
+                        f.write(f'ALLOW_REGISTRATION={str(allow)}\n')
                         found = True
                     else:
                         f.write(line)
                 if not found:
-                    f.write(f'\nALLOW_REGISTRATION={allow}\n')
+                    f.write(f'\nALLOW_REGISTRATION={str(allow)}\n')
             current_app.config['ALLOW_REGISTRATION'] = allow
             return jsonify({"message": "设置已更新"}), 200
         else:
