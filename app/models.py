@@ -283,8 +283,8 @@ class ReportClockin(db.Model):
 
 
 class RequestTypeEnum(PyEnum):
-    LEAVE = 'leave'      # 请假
-    CLOCK_IN = 'clock_in'  # 补卡
+    LEAVE = 'leave'      # 请假 (工作日)
+    CLOCK_IN = 'clock_in'  # 补卡 (周末)
 
 class ReportClockinDetail(db.Model):
     __tablename__ = 'report_clockin_details'

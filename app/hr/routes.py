@@ -8,7 +8,7 @@ from sqlalchemy.orm import aliased, joinedload
 
 from . import hr_bp
 from .. import db
-from ..models import User, RoleEnum, ReportClockin, ReportClockinDetail, TaskProgressUpdate, StageTask, Project, \
+from ..models import User, RoleEnum, ReportClockin, ReportClockinDetail, RequestTypeEnum, TaskProgressUpdate, StageTask, Project, \
     Subproject, ProjectStage
 from ..decorators import permission_required, log_activity
 
@@ -30,6 +30,7 @@ def clockin_detail_to_json(detail):
     return {
         'id': detail.id,
         'report_id': detail.report_id,
+        'request_type': detail.request_type.value,
         'employee_id': detail.report.employee_id,
         'employee_name': detail.report.employee.username,
         'clockin_date': detail.clockin_date.isoformat(),
@@ -133,17 +134,24 @@ def promote_to_leader(user_id):
 
 @hr_bp.route('/clock-in-records', methods=['GET'])
 @login_required
-@permission_required('view_clock_in_reports')  # 权限已细分
 @log_activity('查看打卡记录', action_detail_template='{username}查看了打卡记录')
 def get_clock_in_records():
     """
     查询补卡记录，支持按用户和月份过滤
+    管理员可以查看所有用户数据，普通用户只能查看自己的数据
     """
     query = ReportClockinDetail.query.join(ReportClockin)
     g.log_info = {'username': current_user.username}
+    
+    # 权限控制：普通用户只能查看自己的记录
     user_id = request.args.get('user_id', type=int)
-    if user_id:
-        query = query.filter(ReportClockin.employee_id == user_id)
+    if current_user.can('manage_teams'):
+        # 管理员可以查看所有用户或指定用户的记录
+        if user_id:
+            query = query.filter(ReportClockin.employee_id == user_id)
+    else:
+        # 普通用户只能查看自己的记录
+        query = query.filter(ReportClockin.employee_id == current_user.id)
 
     year = request.args.get('year', type=int)
     month = request.args.get('month', type=int)
@@ -253,20 +261,51 @@ def submit_leave_or_clock_in():
 
     dates = data['dates']
     reason = data['reason']
+    employee_id = data.get('employee_id')  # 管理员可以为其他用户填报
     g.log_info = {"username": current_user.username}
 
+    # 确定填报用户
+    target_user_id = current_user.id
+    if employee_id and current_user.can('manage_teams'):
+        # 管理员可以为其他用户填报
+        target_user_id = employee_id
+        target_user = User.query.get(employee_id)
+        if not target_user:
+            return jsonify({"error": "指定的用户不存在"}), 404
+
+    # 检查重复日期
+    existing_dates = db.session.query(ReportClockinDetail.clockin_date).join(ReportClockin).filter(
+        ReportClockin.employee_id == target_user_id,
+        ReportClockinDetail.clockin_date.in_([datetime.strptime(d, '%Y-%m-%d').date() for d in dates])
+    ).all()
+    
+    if existing_dates:
+        duplicate_dates = [d[0].strftime('%Y-%m-%d') for d in existing_dates]
+        return jsonify({"error": f"以下日期已经填报过：{', '.join(duplicate_dates)}"}), 400
+
+    # 验证日期类型一致性
+    first_date = datetime.strptime(dates[0], '%Y-%m-%d').date()
+    first_weekday = first_date.weekday()
+    is_weekend = first_weekday >= 5  # 周六周日
+    
+    for date_str in dates:
+        date_obj = datetime.strptime(date_str, '%Y-%m-%d').date()
+        date_weekday = date_obj.weekday()
+        date_is_weekend = date_weekday >= 5
+        if date_is_weekend != is_weekend:
+            return jsonify({"error": "不能同时选择工作日和周末日期"}), 400
+
     # 获取或创建当月的ReportClockin
-    # 这部分逻辑可以保留，以便按月组织数据
-    report_date = datetime.strptime(dates[0], '%Y-%m-%d').date()
+    report_date = first_date
     report = ReportClockin.query.filter(
-        ReportClockin.employee_id == current_user.id,
+        ReportClockin.employee_id == target_user_id,
         db.extract('year', ReportClockin.report_date) == report_date.year,
         db.extract('month', ReportClockin.report_date) == report_date.month
     ).first()
 
     if not report:
         report = ReportClockin(
-            employee_id=current_user.id,
+            employee_id=target_user_id,
             report_date=report_date.replace(day=1)
         )
         db.session.add(report)
@@ -276,7 +315,7 @@ def submit_leave_or_clock_in():
         clockin_date = datetime.strptime(date_str, '%Y-%m-%d').date()
         weekday = clockin_date.weekday() # Monday is 0 and Sunday is 6
 
-        request_type = 'leave' if weekday < 5 else 'clock_in'
+        request_type = RequestTypeEnum.LEAVE if weekday < 5 else RequestTypeEnum.CLOCK_IN
 
         new_detail = ReportClockinDetail(
             report_id=report.id,
@@ -313,6 +352,38 @@ def get_my_current_month_records():
         return jsonify([])
 
     return jsonify([clockin_detail_to_json(r) for r in records])
+
+
+# --- 新增：检查用户已填报日期 ---
+@hr_bp.route('/clock-in/existing-dates', methods=['GET'])
+@login_required
+def get_existing_dates():
+    """
+    获取当前用户已填报的日期列表，用于前端重复检查
+    """
+    employee_id = request.args.get('employee_id', type=int)
+    year = request.args.get('year', type=int)
+    month = request.args.get('month', type=int)
+    
+    # 确定查询的用户
+    target_user_id = current_user.id
+    if employee_id and current_user.can('manage_teams'):
+        target_user_id = employee_id
+    
+    query = ReportClockinDetail.query.join(ReportClockin).filter(
+        ReportClockin.employee_id == target_user_id
+    )
+    
+    if year and month:
+        query = query.filter(
+            extract('year', ReportClockinDetail.clockin_date) == year,
+            extract('month', ReportClockinDetail.clockin_date) == month
+        )
+    
+    existing_dates = query.all()
+    date_list = [detail.clockin_date.strftime('%Y-%m-%d') for detail in existing_dates]
+    
+    return jsonify({'existing_dates': date_list})
 
 
 @hr_bp.route('/clock-in/check', methods=['GET'])
