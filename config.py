@@ -4,7 +4,7 @@ from datetime import timedelta
 from dotenv import load_dotenv
 
 # 定位项目根目录
-basedir = os.path.abspath(os.path.dirname(__name__))
+basedir = os.path.abspath(os.path.dirname(__file__))
 # 加载 .env 文件中的环境变量
 load_dotenv(os.path.join(basedir, '.env'))
 
@@ -27,8 +27,23 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False  # 如果想在控制台看到SQL语句，可以设为 True
 
+    # Celery配置 - 使用数据库作为broker以便于开发
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL') or 'sqla+sqlite:///' + os.path.join(basedir, 'celery.db')
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND') or 'db+sqlite:///' + os.path.join(basedir, 'celery.db')
+    CELERY_TASK_SERIALIZER = 'json'
+    CELERY_RESULT_SERIALIZER = 'json'
+    CELERY_ACCEPT_CONTENT = ['json']
+    CELERY_TIMEZONE = 'UTC'
+    CELERY_ENABLE_UTC = True
 
-    UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')  # 在项目根目录下创建uploads文件夹
+    UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')
+    TEMP_DIR = os.path.join(basedir, '..', 'temp/')
+
+    @staticmethod
+    def init_app(app):
+        # 确保上传和临时文件夹存在
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        os.makedirs(app.config['TEMP_DIR'], exist_ok=True)
 
 
 class DevelopmentConfig(Config):

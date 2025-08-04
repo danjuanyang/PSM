@@ -47,6 +47,9 @@ def create_app(config_name='default'):
 
     # a. 从配置对象加载配置
     app.config.from_object(config[config_name])
+    
+    # a.1 初始化配置（例如创建文件夹）
+    config[config_name].init_app(app)
 
     # 在 init_app 之前，将 render_as_batch=True 设置给 Migrate
     # 这确保 Alembic 在 SQLite 上总是使用批处理模式
@@ -97,12 +100,16 @@ def create_app(config_name='default'):
     app.register_blueprint(training_bp)
     app.register_blueprint(activity_bp)
     app.register_blueprint(analytics_bp)
-    # e. Shell 上下文处理器 (可选，但推荐)
+    # e. 配置Celery
+    from celery_app import make_celery
+    make_celery(app)
+
+    # f. Shell 上下文处理器 (可选，但推荐)
     @app.shell_context_processor
     def make_shell_context():
         # 方便在 `flask shell` 中直接使用 db 和 models，便于调试
         from . import models
         return dict(db=db, models=models)
 
-    # f. 返回创建好的应用实例
+    # g. 返回创建好的应用实例
     return app

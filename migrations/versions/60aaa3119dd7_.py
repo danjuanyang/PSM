@@ -1,8 +1,8 @@
 """empty message
 
-Revision ID: e69d4ed6fc3d
+Revision ID: 60aaa3119dd7
 Revises: 
-Create Date: 2025-07-23 13:18:31.342269
+Create Date: 2025-08-04 10:26:24.956151
 
 """
 from alembic import op
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = 'e69d4ed6fc3d'
+revision = '60aaa3119dd7'
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -31,6 +31,14 @@ def upgrade():
     sa.Column('is_active', sa.Boolean(), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_permissions')),
     sa.UniqueConstraint('name', name=op.f('uq_permissions_name'))
+    )
+    op.create_table('system_configs',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('key', sa.String(length=64), nullable=False, comment='配置项的键'),
+    sa.Column('value', sa.String(length=255), nullable=True, comment='配置项的值'),
+    sa.Column('description', sa.String(length=255), nullable=True, comment='配置描述'),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_system_configs')),
+    sa.UniqueConstraint('key', name=op.f('uq_system_configs_key'))
     )
     op.create_table('users',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -53,7 +61,8 @@ def upgrade():
     sa.Column('api_key', sa.String(length=255), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=True),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_ai_api_user_id_users'), ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_ai_api'))
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_ai_api')),
+    sa.UniqueConstraint('user_id', name=op.f('uq_ai_api_user_id'))
     )
     op.create_table('ai_conversations',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -177,7 +186,9 @@ def upgrade():
     sa.Column('content', sa.Text(), nullable=False),
     sa.Column('role', sa.String(length=10), nullable=False, comment="'user' or 'assistant'"),
     sa.Column('created_at', sa.DateTime(), nullable=True),
-    sa.Column('tokens_used', sa.Integer(), nullable=True),
+    sa.Column('prompt_tokens', sa.Integer(), nullable=True),
+    sa.Column('completion_tokens', sa.Integer(), nullable=True),
+    sa.Column('total_tokens', sa.Integer(), nullable=True),
     sa.Column('model_version', sa.String(length=50), nullable=True),
     sa.CheckConstraint("role IN ('user', 'assistant', 'system')", name=op.f('ck_ai_messages_check_role')),
     sa.ForeignKeyConstraint(['conversation_id'], ['ai_conversations.id'], name=op.f('fk_ai_messages_conversation_id_ai_conversations'), ondelete='CASCADE'),
@@ -231,6 +242,7 @@ def upgrade():
     op.create_table('report_clockin_details',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('report_id', sa.Integer(), nullable=False),
+    sa.Column('request_type', sa.Enum('LEAVE', 'CLOCK_IN', name='requesttypeenum'), nullable=False),
     sa.Column('clockin_date', sa.Date(), nullable=False),
     sa.Column('weekday', sa.String(length=20), nullable=True),
     sa.Column('remarks', sa.String(length=200), nullable=True),
@@ -266,6 +278,7 @@ def upgrade():
     sa.Column('timestamp', sa.DateTime(), nullable=True),
     sa.Column('resource_type', sa.String(length=50), nullable=True),
     sa.Column('resource_id', sa.Integer(), nullable=True),
+    sa.Column('module', sa.String(length=50), nullable=True, comment="前端模块名，例如 'ai', 'project'"),
     sa.ForeignKeyConstraint(['session_id'], ['user_sessions.id'], name=op.f('fk_user_activity_logs_session_id_user_sessions'), ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_user_activity_logs_user_id_users'), ondelete='SET NULL'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_user_activity_logs'))
@@ -424,6 +437,7 @@ def downgrade():
     op.drop_table('ai_conversations')
     op.drop_table('ai_api')
     op.drop_table('users')
+    op.drop_table('system_configs')
     op.drop_table('permissions')
     op.drop_table('ai_tags')
     # ### end Alembic commands ###

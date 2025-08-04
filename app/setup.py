@@ -80,7 +80,6 @@ ROLE_DEFAULT_PERMISSIONS = {
     ],
     RoleEnum.LEADER: [
         'view_users',
-        'manage_projects',
         'view_reports',
         # 项目模块权限
         'manage_subprojects', 'delete_subprojects',  # 负责人可以管理自己项目下的子项目

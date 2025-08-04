@@ -508,6 +508,51 @@ Index('idx_ai_conversations_updated_at', AIConversation.updated_at)
 Index('idx_ai_message_feedback_message_id', AIMessageFeedback.message_id)
 
 
+# ------------------- 文件合并模型 (File Merge Models) -------------------
+class FileMergeTaskStatusEnum(PyEnum):
+    PENDING = 'pending'
+    IN_PROGRESS = 'in_progress'
+    GENERATING_PREVIEW = 'generating_preview'
+    PREVIEW_READY = 'preview_ready'
+    GENERATING_FINAL = 'generating_final'
+    COMPLETED = 'completed'
+    FAILED = 'failed'
+
+
+class FileMergeTask(db.Model):
+    __tablename__ = 'file_merge_tasks' 
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.String(100), unique=True, nullable=False, comment="Celery任务ID")
+    project_id = db.Column(db.Integer, db.ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    status = db.Column(db.Enum(FileMergeTaskStatusEnum), default=FileMergeTaskStatusEnum.PENDING)
+    progress = db.Column(db.Integer, default=0, comment="进度百分比 0-100")
+    
+    # 合并配置
+    merge_config = db.Column(db.JSON, comment="合并配置JSON")
+    selected_file_ids = db.Column(db.JSON, comment="选中的文件ID列表")
+    pages_to_delete_indices = db.Column(db.JSON, comment="删除的页面索引列表")
+    
+    # 预览相关
+    preview_session_id = db.Column(db.String(100), comment="预览会话ID")
+    preview_image_urls = db.Column(db.JSON, comment="预览图片URL列表")
+    
+    # 结果文件
+    final_file_path = db.Column(db.String(500), comment="最终合并文件路径")
+    final_file_name = db.Column(db.String(255), comment="最终文件名")
+    
+    # 状态和时间
+    status_message = db.Column(db.String(500), comment="状态消息")
+    error_message = db.Column(db.Text, comment="错误信息")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    completed_at = db.Column(db.DateTime, comment="完成时间")
+    
+    # 关系
+    project = db.relationship('Project', backref='merge_tasks')
+    user = db.relationship('User', backref='merge_tasks')
+
+
 # ------------------- 提醒模型 (Alerts) -------------------
 class Alert(db.Model):
     __tablename__ = 'alerts'

@@ -247,3 +247,4 @@
 /node_modules/.package-lock.json
 /migrations/versions/3f23da52a244_.py
 /migrations/versions/4ae1d7a97e59_.py
+/celery.db
