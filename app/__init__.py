@@ -100,9 +100,13 @@ def create_app(config_name='default'):
     app.register_blueprint(training_bp)
     app.register_blueprint(activity_bp)
     app.register_blueprint(analytics_bp)
-    # e. 配置Celery
-    from celery_app import make_celery
-    make_celery(app)
+    # e. 启动临时文件清理调度器
+    from .files.cleanup_scheduler import cleanup_scheduler
+    cleanup_scheduler.init_app(app)
+    
+    # 在应用上下文中启动清理调度器
+    with app.app_context():
+        cleanup_scheduler.start_cleanup_scheduler()
 
     # f. Shell 上下文处理器 (可选，但推荐)
     @app.shell_context_processor

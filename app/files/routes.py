@@ -555,7 +555,6 @@ def start_merge_preview():
 
 @files_bp.route('/merge/finalize', methods=['POST'])
 @login_required
-@permission_required('view_files')
 @log_activity('生成最终合并文件', action_detail_template='项目{project_name}生成最终合并文件')
 def finalize_merge():
     """生成最终合并文件"""
@@ -770,7 +769,8 @@ def delete_merge_task(task_id):
         if merge_task.user_id != current_user.id:
             return jsonify({'error': '没有权限删除该任务'}), 403
         if merge_task.preview_session_id:
-            temp_dir = os.path.join('/tmp', merge_task.preview_session_id)
+            temp_base_dir = current_app.config.get('TEMP_DIR', tempfile.gettempdir())
+            temp_dir = os.path.join(temp_base_dir, merge_task.preview_session_id)
             cleanup_temp_files(temp_dir)
         db.session.delete(merge_task)
         db.session.commit()

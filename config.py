@@ -27,15 +27,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = False  # 如果想在控制台看到SQL语句，可以设为 True
 
-    # Celery配置 - 使用数据库作为broker以便于开发
-    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL') or 'sqla+sqlite:///' + os.path.join(basedir, 'celery.db')
-    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND') or 'db+sqlite:///' + os.path.join(basedir, 'celery.db')
-    CELERY_TASK_SERIALIZER = 'json'
-    CELERY_RESULT_SERIALIZER = 'json'
-    CELERY_ACCEPT_CONTENT = ['json']
-    CELERY_TIMEZONE = 'UTC'
-    CELERY_ENABLE_UTC = True
-
+    # 文件存储配置
     UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')
     TEMP_DIR = os.path.join(basedir, '..', 'temp/')
 
