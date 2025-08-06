@@ -247,4 +247,8 @@
 /node_modules/.package-lock.json
 /migrations/versions/3f23da52a244_.py
 /migrations/versions/4ae1d7a97e59_.py
-/celery.db
+
+/app/fonts/simsun.ttf
+/app/fonts/仿宋_GB2312.ttf
+/app/fonts/方正小标宋_GBK.ttf
+/app/fonts/楷体_GB2312.ttf

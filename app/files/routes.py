@@ -23,7 +23,8 @@ from ..decorators import permission_required, log_activity
 from .merge_tasks import generate_preview_task, generate_final_pdf_task, cleanup_temp_files
 
 # 允许的文件扩展名
-ALLOWED_EXTENSIONS = {"txt", "pdf", "png", "jpg", "jpeg", "gif", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rar"}
+ALLOWED_EXTENSIONS = {"txt", "pdf", "png", "jpg", "jpeg", "gif", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip",
+                      "rar"}
 ALLOWED_TRAINING_EXTENSIONS = {"pdf"}
 
 MIME_TYPE_MAPPING = {
@@ -35,11 +36,13 @@ MIME_TYPE_MAPPING = {
     'txt': 'text/plain'
 }
 
+
 # --- 辅助函数 ---
 
 def allowed_file(filename, allowed_extensions=ALLOWED_EXTENSIONS):
     """检查文件扩展名是否在允许列表中"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
 
 def extract_text_from_file(file_path, file_ext):
     """从文件中提取文本"""
@@ -69,6 +72,7 @@ def extract_text_from_file(file_path, file_ext):
         current_app.logger.error(f"Error extracting text from {file_path}: {e}")
     return text
 
+
 def file_to_json(file_record, snippet=None):
     """将ProjectFile对象转换为JSON"""
     data = {
@@ -90,6 +94,7 @@ def file_to_json(file_record, snippet=None):
         data['snippet'] = snippet
     return data
 
+
 def can_access_file(user, file_record):
     """检查用户是否有权限访问（查看/下载）特定文件"""
     if file_record.is_public:
@@ -107,6 +112,7 @@ def can_access_file(user, file_record):
         if file_record.subproject_id in user_subproject_ids:
             return True
     return False
+
 
 def highlight_text(text, query):
     """在文本中为搜索关键词添加高亮标记"""
@@ -129,6 +135,7 @@ def highlight_text(text, query):
     except Exception as e:
         current_app.logger.error(f"高亮处理错误: {str(e)}")
         return text
+
 
 def get_content_preview(content, query, context_length=150):
     """获取匹配内容的上下文预览"""
@@ -155,6 +162,7 @@ def get_content_preview(content, query, context_length=150):
     except Exception as e:
         current_app.logger.error(f"生成内容预览时出错: {str(e)}")
         return None
+
 
 # --- 文件核心路由 ---
 
@@ -183,6 +191,7 @@ def upload_training_material(id):
         return jsonify({'message': '文件上传成功。'})
     else:
         return jsonify({'message': '不允许的文件类型，仅支持PDF。'}), 400
+
 
 @files_bp.route('/tasks/<int:task_id>/upload', methods=['POST'])
 @login_required
@@ -230,6 +239,7 @@ def upload_file_for_task(task_id):
         return jsonify({"message": "文件上传成功", "file": file_to_json(new_file)}), 201
     return jsonify({"error": "文件类型不允许"}), 400
 
+
 @files_bp.route('/tasks/<int:task_id>/files', methods=['GET'])
 @login_required
 @log_activity('查看文件列表', action_detail_template='查看任务{task_name}已上传文件列表')
@@ -239,6 +249,7 @@ def get_task_files(task_id):
     all_files = ProjectFile.query.filter_by(task_id=task.id).all()
     accessible_files = [f for f in all_files if can_access_file(current_user, f)]
     return jsonify([file_to_json(f) for f in accessible_files]), 200
+
 
 @files_bp.route('/download/<int:file_id>', methods=['GET'])
 @login_required
@@ -259,13 +270,14 @@ def download_file(file_id):
     except FileNotFoundError:
         return jsonify({"error": "文件未在服务器上找到"}), 404
 
+
 @files_bp.route('/<int:file_id>', methods=['DELETE'])
 @login_required
 @log_activity('删除文件', action_detail_template='{username}删除文件{file_name}')
 def delete_file(file_id):
     # ... (代码无变化)
     file_record = ProjectFile.query.get_or_404(file_id)
-    g.log_info = {'file_name': file_record.original_name,"username":current_user.username}
+    g.log_info = {'file_name': file_record.original_name, "username": current_user.username}
     is_uploader = file_record.upload_user_id == current_user.id
     is_manager = False
     if current_user.role in [RoleEnum.SUPER, RoleEnum.ADMIN]:
@@ -289,11 +301,13 @@ def delete_file(file_id):
         db.session.rollback()
         return jsonify({"error": f"删除文件时出错: {str(e)}"}), 500
 
+
 @files_bp.route('/public', methods=['GET'])
 def get_public_files():
     # ... (代码无变化)
     files = ProjectFile.query.filter_by(is_public=True).all()
     return jsonify([file_to_json(f) for f in files]), 200
+
 
 @files_bp.route('/', methods=['GET'])
 @login_required
@@ -335,6 +349,7 @@ def get_all_files():
             ):
                 accessible_files.append(f)
     return jsonify([file_to_json(f) for f in accessible_files]), 200
+
 
 @files_bp.route('/search', methods=['GET'])
 @login_required
@@ -393,14 +408,14 @@ def search_files():
             .outerjoin(Project).outerjoin(Subproject).outerjoin(ProjectStage).outerjoin(StageTask) \
             .join(User, ProjectFile.upload_user_id == User.id).outerjoin(FileContent) \
             .filter(or_(
-                *search_conditions,
-                Project.name.ilike(f'%{search_query}%'),
-                Subproject.name.ilike(f'%{search_query}%'),
-                ProjectStage.name.ilike(f'%{search_query}%'),
-                StageTask.name.ilike(f'%{search_query}%'),
-                User.username.ilike(f'%{search_query}%'),
-                FileContent.content.ilike(f'%{search_query}%')
-            )).order_by(ProjectFile.upload_date.desc()).all()
+            *search_conditions,
+            Project.name.ilike(f'%{search_query}%'),
+            Subproject.name.ilike(f'%{search_query}%'),
+            ProjectStage.name.ilike(f'%{search_query}%'),
+            StageTask.name.ilike(f'%{search_query}%'),
+            User.username.ilike(f'%{search_query}%'),
+            FileContent.content.ilike(f'%{search_query}%')
+        )).order_by(ProjectFile.upload_date.desc()).all()
         results = []
         for file_record in search_results:
             try:
@@ -415,8 +430,10 @@ def search_files():
                     'fileSize': file_size,
                     'uploadTime': file_record.upload_date.isoformat(),
                     'uploader': highlight_text(file_record.upload_user.username, search_query),
-                    'projectName': highlight_text(file_record.project.name if file_record.project else None, search_query),
-                    'subprojectName': highlight_text(file_record.subproject.name if file_record.subproject else None, search_query),
+                    'projectName': highlight_text(file_record.project.name if file_record.project else None,
+                                                  search_query),
+                    'subprojectName': highlight_text(file_record.subproject.name if file_record.subproject else None,
+                                                     search_query),
                     'stageName': highlight_text(file_record.stage.name if file_record.stage else None, search_query),
                     'taskName': highlight_text(file_record.task.name if file_record.task else None, search_query),
                     'is_public': file_record.is_public,
@@ -441,6 +458,7 @@ def search_files():
     except Exception as e:
         current_app.logger.error(f"搜索文件时出错: {str(e)}")
         return jsonify({'error': f'搜索失败: {str(e)}'}), 500
+
 
 @files_bp.route('/preview/<int:file_id>', methods=['GET'])
 @login_required
@@ -472,7 +490,33 @@ def preview_file(file_id):
         'can_download': True
     }), 200
 
+
 # --- PDF 合并路由 ---
+@files_bp.route('/merge/fonts', methods=['GET'])
+@login_required
+def get_available_fonts():
+    """获取可用的字体列表"""
+    try:
+        font_dir = os.path.join(current_app.root_path, 'fonts')
+        if not os.path.isdir(font_dir):
+            current_app.logger.warning(f"字体目录不存在: {font_dir}")
+            return jsonify({'fonts': []})
+
+        supported_extensions = ('.ttf', '.ttc')
+        font_files = [f for f in os.listdir(font_dir) if f.lower().endswith(supported_extensions)]
+
+        fonts_data = []
+        for font_file in font_files:
+            fonts_data.append({
+                'filename': font_file,
+                'display_name': os.path.splitext(font_file)[0]
+            })
+
+        return jsonify({'fonts': fonts_data})
+    except Exception as e:
+        current_app.logger.error(f"获取字体列表失败: {e}")
+        return jsonify({'error': '无法获取字体列表'}), 500
+
 
 def can_merge_project_files(user, project):
     """检查用户是否可以合并项目文件"""
@@ -486,6 +530,7 @@ def can_merge_project_files(user, project):
         return True
     return False
 
+
 @files_bp.route('/merge/start-preview', methods=['POST'])
 @login_required
 @log_activity('启动文件合并预览', action_detail_template='项目{project_name}启动文件合并预览')
@@ -495,11 +540,10 @@ def start_merge_preview():
         data = request.get_json()
         if not data:
             return jsonify({'error': '请求数据不能为空'}), 400
+
         project_id = data.get('project_id')
         selected_file_ids = data.get('selected_file_ids', [])
         merge_config = data.get('merge_config', {})
-        cover_options = merge_config.get('coverPage', {})
-        toc_options = merge_config.get('toc', {})
         if not project_id:
             return jsonify({'error': '项目ID不能为空'}), 400
         project = Project.query.get(project_id)
@@ -507,51 +551,42 @@ def start_merge_preview():
             return jsonify({'error': '项目不存在'}), 404
         if not can_merge_project_files(current_user, project):
             return jsonify({'error': '没有权限合并该项目的文件'}), 403
+        # 检查是否有可合并的PDF文件
+        file_query = ProjectFile.query.filter(ProjectFile.project_id == project_id, ProjectFile.file_type == 'pdf')
         if selected_file_ids:
-            pdf_files = ProjectFile.query.filter(
-                ProjectFile.id.in_(selected_file_ids),
-                ProjectFile.project_id == project_id,
-                ProjectFile.file_type == 'pdf'
-            ).count()
-        else:
-            pdf_files = ProjectFile.query.filter(
-                ProjectFile.project_id == project_id,
-                ProjectFile.file_type == 'pdf'
-            ).count()
-        if pdf_files == 0:
+            file_query = file_query.filter(ProjectFile.id.in_(selected_file_ids))
+        if file_query.count() == 0:
             return jsonify({'error': '没有找到可合并的PDF文件'}), 400
         task_id = str(uuid.uuid4())
-        complete_merge_config = {
-            'coverPage': cover_options,
-            'toc': toc_options,
-            'selected_file_order': selected_file_ids
-        }
+        # 直接使用从前端获取的完整 merge_config
         merge_task = FileMergeTask(
             task_id=task_id,
             project_id=project_id,
             user_id=current_user.id,
             status=FileMergeTaskStatusEnum.PENDING,
-            merge_config=complete_merge_config,
+            merge_config=merge_config,  # 使用完整的配置
             selected_file_ids=selected_file_ids if selected_file_ids else None,
             status_message='任务已创建，等待处理...'
         )
         db.session.add(merge_task)
         db.session.commit()
-        celery_task = generate_preview_task.delay(
+        # 将完整的配置传递给异步任务
+        async_task_result = generate_preview_task.delay(
             task_id=task_id,
             project_id=project_id,
             selected_file_ids=selected_file_ids,
-            merge_config=complete_merge_config
+            merge_config=merge_config
         )
-        current_app.logger.info(f"启动文件合并预览任务: {task_id}, Celery任务ID: {celery_task.id}")
+        current_app.logger.info(f"启动文件合并预览任务: {task_id}, 异步任务ID:{async_task_result.id}")
         return jsonify({
             'task_id': task_id,
-            'celery_task_id': celery_task.id,
+            'celery_task_id': async_task_result.id,  # 保持兼容性
             'message': '预览任务已启动'
         }), 200
     except Exception as e:
-        current_app.logger.error(f"启动合并预览任务失败: {e}")
+        current_app.logger.error(f"启动合并预览任务失败: {e}", exc_info=True)
         return jsonify({'error': f'启动预览任务失败: {str(e)}'}), 500
+
 
 @files_bp.route('/merge/finalize', methods=['POST'])
 @login_required
@@ -605,6 +640,7 @@ def finalize_merge():
         current_app.logger.error(f"启动最终合并任务失败: {e}")
         return jsonify({'error': f'启动最终合并任务失败: {str(e)}'}), 500
 
+
 @files_bp.route('/merge/progress/<task_id>', methods=['GET'])
 @login_required
 def get_task_progress(task_id):
@@ -639,6 +675,7 @@ def get_task_progress(task_id):
         current_app.logger.error(f"获取任务进度失败: {e}")
         return jsonify({'error': f'获取任务进度失败: {str(e)}'}), 500
 
+
 @files_bp.route('/merge/download/<task_id>', methods=['GET'])
 @login_required
 def download_merged_file(task_id):
@@ -655,6 +692,7 @@ def download_merged_file(task_id):
             return jsonify({'error': '文件尚未生成完成'}), 400
         if not merge_task.final_file_path or not os.path.exists(merge_task.final_file_path):
             return jsonify({'error': '文件不存在'}), 404
+
         def generate_file_stream():
             try:
                 with open(merge_task.final_file_path, 'rb') as f:
@@ -666,6 +704,7 @@ def download_merged_file(task_id):
             except Exception as e:
                 current_app.logger.error(f"读取文件流失败: {e}")
                 raise
+
         filename = merge_task.final_file_name or f"merged_{task_id}.pdf"
         encoded_filename = quote(filename)
         response = Response(
@@ -681,6 +720,7 @@ def download_merged_file(task_id):
     except Exception as e:
         current_app.logger.error(f"下载合并文件失败: {e}")
         return jsonify({'error': f'下载文件失败: {str(e)}'}), 500
+
 
 @files_bp.route('/merge/temp_preview_image/<session_id>/<image_filename>', methods=['GET'])
 @login_required
@@ -705,6 +745,7 @@ def serve_temp_preview_image(session_id, image_filename):
     except Exception as e:
         current_app.logger.error(f"提供预览图片失败: {e}")
         return jsonify({'error': '获取预览图片失败'}), 500
+
 
 @files_bp.route('/tasks', methods=['GET'])
 @login_required
@@ -757,6 +798,7 @@ def get_user_merge_tasks():
     except Exception as e:
         current_app.logger.error(f"获取用户合并任务列表失败: {e}")
         return jsonify({'error': '获取任务列表失败'}), 500
+
 
 @files_bp.route('/task/<task_id>', methods=['DELETE'])
 @login_required
