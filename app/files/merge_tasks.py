@@ -297,43 +297,78 @@ def create_toc_page(file_list, options):
         return None
 
 
-def merge_pdfs(file_paths_list, output_path, cover_path=None, toc_path=None, pages_to_delete=None):
+def create_separator_page(stage_name, task_name, options):
+    """创建居中任务分隔页（使用更可靠的Spacer布局）"""
+    try:
+        font_name = options.get('font', 'simsun.ttf')
+        task_font_size = options.get('font_size', 16)
+        stage_font_size = task_font_size - 2
+
+        registered_font_name = register_font(font_name)
+        if not registered_font_name:
+            raise Exception("无法注册分隔页字体。")
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+        doc = SimpleDocTemplate(temp_file.name, pagesize=A4, topMargin=inch, bottomMargin=inch)
+
+        stage_style = ParagraphStyle(
+            'StageSeparatorStyle',
+            fontName=registered_font_name,
+            fontSize=stage_font_size,
+            alignment=1,
+            leading=stage_font_size * 1.2
+        )
+        task_style = ParagraphStyle(
+            'TaskSeparatorStyle',
+            fontName=registered_font_name,
+            fontSize=task_font_size,
+            alignment=1,
+            leading=task_font_size * 1.2
+        )
+
+        stage_p = Paragraph(stage_name, stage_style)
+        task_p = Paragraph(task_name, task_style)
+
+        # 计算两个段落的实际高度
+        w, h1 = stage_p.wrap(doc.width, doc.height)
+        w, h2 = task_p.wrap(doc.width, doc.height)
+        total_content_height = h1 + h2
+
+        # 计算将内容推到中心的Spacer高度
+        top_spacer_height = (doc.height - total_content_height) / 2
+
+        story = [
+            Spacer(1, top_spacer_height),
+            stage_p,
+            task_p
+        ]
+        
+        doc.build(story)
+        return temp_file.name
+
+    except Exception as e:
+        current_app.logger.error(f"创建分隔页失败: {e}", exc_info=True)
+        return None
+
+
+def merge_pdfs(file_paths_list, output_path, pages_to_delete=None):
     """合并PDF文件"""
     try:
         pdf_writer = PyPDF2.PdfWriter()
-
-        # 添加封面页
-        if cover_path and os.path.exists(cover_path):
-            with open(cover_path, 'rb') as cover_file:
-                cover_reader = PyPDF2.PdfReader(cover_file)
-                for page in cover_reader.pages:
-                    pdf_writer.add_page(page)
-
-        # 添加目录页
-        if toc_path and os.path.exists(toc_path):
-            with open(toc_path, 'rb') as toc_file:
-                toc_reader = PyPDF2.PdfReader(toc_file)
-                for page in toc_reader.pages:
-                    pdf_writer.add_page(page)
-
-        # 添加文件内容
-        pages_to_delete = pages_to_delete or []
+        pages_to_delete = set(pages_to_delete or [])
         current_page_index = 0
 
-        # 如果有封面页和目录页，调整页面索引
-        if cover_path:
-            current_page_index += 1
-        if toc_path:
-            current_page_index += 1
-
         for file_path in file_paths_list:
-            if os.path.exists(file_path):
-                with open(file_path, 'rb') as pdf_file:
-                    pdf_reader = PyPDF2.PdfReader(pdf_file)
-                    for page_num, page in enumerate(pdf_reader.pages):
-                        if current_page_index not in pages_to_delete:
-                            pdf_writer.add_page(page)
-                        current_page_index += 1
+            if not os.path.exists(file_path):
+                current_app.logger.warning(f"文件不存在，跳过: {file_path}")
+                continue
+                
+            with open(file_path, 'rb') as pdf_file:
+                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                for page_num, page in enumerate(pdf_reader.pages):
+                    if current_page_index not in pages_to_delete:
+                        pdf_writer.add_page(page)
+                    current_page_index += 1
 
         # 写入输出文件
         with open(output_path, 'wb') as output_file:
@@ -342,7 +377,7 @@ def merge_pdfs(file_paths_list, output_path, cover_path=None, toc_path=None, pag
         return True
 
     except Exception as e:
-        current_app.logger.error(f"合并PDF失败: {e}")
+        current_app.logger.error(f"合并PDF失败: {e}", exc_info=True)
         return False
 
 
@@ -497,14 +532,39 @@ def generate_preview_task(task_id, project_id, selected_file_ids, merge_config):
                 })
             toc_path = create_toc_page(file_info_list, options=toc_options)
 
+        # 按任务ID对文件进行排序，以确保分隔页逻辑正确
+        files.sort(key=lambda f: (f.task_id is None, f.task_id))
+
         update_task_progress(task_id, 40, status_message="合并PDF文件...")
 
         # 合并PDF
         merged_pdf_path = os.path.join(image_output_dir, 'merged_preview.pdf')
-        file_paths_in_order = [file_obj.file_path for file_obj in files]
-        print(f"任务 {task_id}: 开始合并PDF")
+        
+        # 构建包含分隔页的最终文件列表
+        paths_to_merge = []
+        temp_files_to_clean = []
+        if cover_path:
+            paths_to_merge.append(cover_path)
+            temp_files_to_clean.append(cover_path)
+        if toc_path:
+            paths_to_merge.append(toc_path)
+            temp_files_to_clean.append(toc_path)
 
-        success = merge_pdfs(file_paths_in_order, merged_pdf_path, cover_path, toc_path)
+        last_task_id = None
+        for file_obj in files:
+            current_task_id = file_obj.task_id
+            # 如果任务ID非空且发生变化，则插入分隔页
+            if current_task_id is not None and current_task_id != last_task_id:
+                separator_pdf = create_separator_page(file_obj.task.stage.name, file_obj.task.name, toc_options)
+                if separator_pdf:
+                    paths_to_merge.append(separator_pdf)
+                    temp_files_to_clean.append(separator_pdf)
+                last_task_id = current_task_id
+            
+            paths_to_merge.append(file_obj.file_path)
+
+        print(f"任务 {task_id}: 开始合并PDF")
+        success = merge_pdfs(paths_to_merge, merged_pdf_path)
         if not success:
             raise Exception("PDF合并失败")
 
@@ -593,96 +653,96 @@ def generate_preview_task(task_id, project_id, selected_file_ids, merge_config):
 @async_task
 def generate_final_pdf_task(task_id, project_id, selected_file_ids, merge_config, pages_to_delete_indices):
     """生成最终PDF的任务 - 使用线程池异步执行"""
+    cover_path, toc_path = None, None
+    temp_files_to_clean = []
+    
     try:
         update_task_progress(task_id, 5, FileMergeTaskStatusEnum.GENERATING_FINAL, "开始生成最终PDF...")
 
-        # 获取项目
         project = Project.query.get(project_id)
         if not project:
             raise Exception("项目不存在")
 
-        # 按选择顺序获取PDF文件
         files = get_ordered_pdf_files(project_id, selected_file_ids)
-
         if not files:
             raise Exception("没有找到可合并的PDF文件")
+        
+        # 关键修复：按任务ID排序以确保分隔页逻辑正确
+        files.sort(key=lambda f: (f.task_id is None, f.task_id))
 
-        current_app.logger.info(f"最终合并 {len(files)} 个PDF文件，按以下顺序：")
-        for i, file_obj in enumerate(files):
-            current_app.logger.info(f"  {i + 1}. {file_obj.original_name}")
+        update_task_progress(task_id, 20, status_message="创建封面和目录...")
 
-        update_task_progress(task_id, 20, status_message="准备合并文件...")
-
-        # 从配置中获取字体信息
+        header_page_count = 0
         text_font_name = merge_config.get('text_font', 'simsun.ttf')
-
-        # 创建封面页
-        cover_path = None
         cover_options = merge_config.get('coverPage', {})
         if cover_options.get('enabled', False):
-            full_cover_options = {
-                'title': project.name,
-                'date': datetime.now().strftime('%Y-%m-%d'),
-                **cover_options,
-                'text_font': text_font_name,
-            }
+            full_cover_options = {'title': project.name, 'date': datetime.now().strftime('%Y-%m-%d'), **cover_options, 'text_font': text_font_name}
             cover_path = create_cover_page(full_cover_options)
+            if cover_path:
+                temp_files_to_clean.append(cover_path)
+                header_page_count += 1
 
-        # 创建目录页
-        toc_path = None
         toc_options = merge_config.get('toc', {})
         if toc_options.get('enabled', False):
-            file_info_list = []
-            for file_obj in files:
-                pages_count = get_file_pages_count(file_obj.file_path)
-                hierarchy = {
-                    'project': file_obj.project.name if file_obj.project else '',
-                    'subproject': file_obj.subproject.name if file_obj.subproject else '',
-                    'stage': file_obj.stage.name if file_obj.stage else '',
-                    'task': file_obj.task.name if file_obj.task else ''
-                }
-                file_info_list.append({
-                    'original_name': file_obj.original_name,
-                    'pages_count': pages_count,
-                    'hierarchy': hierarchy
-                })
+            file_info_list = [{'original_name': f.original_name, 'pages_count': get_file_pages_count(f.file_path), 'hierarchy': {'project': f.project.name, 'subproject': f.subproject.name, 'stage': f.stage.name, 'task': f.task.name}} for f in files]
             toc_path = create_toc_page(file_info_list, options=toc_options)
+            if toc_path:
+                temp_files_to_clean.append(toc_path)
+                header_page_count += 1
 
-        update_task_progress(task_id, 40, status_message="合并PDF文件...")
+        update_task_progress(task_id, 40, status_message="准备合并文件列表...")
+        
+        paths_to_merge = []
+        if cover_path: paths_to_merge.append(cover_path)
+        if toc_path: paths_to_merge.append(toc_path)
 
-        # 创建输出目录
+        last_task_id = None
+        for file_obj in files:
+            current_task_id = file_obj.task_id
+            if current_task_id is not None and current_task_id != last_task_id:
+                separator_pdf = create_separator_page(file_obj.task.stage.name, file_obj.task.name, toc_options)
+                if separator_pdf:
+                    paths_to_merge.append(separator_pdf)
+                    temp_files_to_clean.append(separator_pdf)
+                last_task_id = current_task_id
+            
+            paths_to_merge.append(file_obj.file_path)
+
         output_dir = os.path.join(current_app.config.get('UPLOAD_FOLDER', '/tmp'), 'merged_files')
         os.makedirs(output_dir, exist_ok=True)
-
-        # 生成最终文件路径
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         final_filename = f"{project.name}_merged_{timestamp}.pdf"
-
-        # 最终文件路径
         final_file_path = os.path.join(output_dir, final_filename)
 
-        # 如果有页面删除操作，处理页面删除
-        file_paths_in_order = [f.file_path for f in files]
-        if not merge_pdfs(file_paths_in_order, final_file_path, cover_path, toc_path, pages_to_delete_indices):
-            raise Exception("无法合并最终 PDF")
-        # 更新任务信息
+        update_task_progress(task_id, 60, status_message="正在合并PDF...")
+        if not merge_pdfs(paths_to_merge, final_file_path, pages_to_delete=pages_to_delete_indices):
+            raise Exception("无法合并最终PDF")
+
+        update_task_progress(task_id, 80, status_message="正在添加页码...")
+        font_for_numbering = toc_options.get('font', 'simsun.ttf')
+        font_path_for_numbering = os.path.join(current_app.root_path, 'fonts', font_for_numbering)
+        if not add_page_numbers_to_pdf(final_file_path, font_path_for_numbering, header_page_count=header_page_count):
+            raise Exception("添加页码失败")
+
         merge_task = FileMergeTask.query.filter_by(task_id=task_id).first()
         if merge_task:
             merge_task.final_file_path = final_file_path
             merge_task.final_file_name = final_filename
             db.session.commit()
 
+        update_task_progress(task_id, 100, FileMergeTaskStatusEnum.COMPLETED, "最终PDF生成成功")
         return {'final_file_path': final_file_path, 'final_filename': final_filename}
 
     except Exception as e:
-        current_app.logger.error(f"Final PDF task {task_id} failed: {e}", exc_info=True)
-        update_task_progress(task_id, 100, FileMergeTaskStatusEnum.FAILED, "最终 PDF 生成失败", str(e))
+        current_app.logger.error(f"最终PDF任务 {task_id} 失败: {e}", exc_info=True)
+        update_task_progress(task_id, 100, FileMergeTaskStatusEnum.FAILED, "最终PDF生成失败", str(e))
     finally:
-        if 'cover_path' in locals() and cover_path:
-            os.unlink(cover_path)
-        if 'toc_path' in locals() and toc_path:
-            os.unlink(toc_path)
-            update_task_progress(task_id, 100, FileMergeTaskStatusEnum.COMPLETED, "最终 PDF 生成成功")
+        for f in temp_files_to_clean:
+            try:
+                if os.path.exists(f):
+                    os.unlink(f)
+            except Exception as e:
+                current_app.logger.error(f"清理临时文件失败 {f}: {e}")
 
 
 def cleanup_temp_files(temp_dir):
@@ -694,3 +754,50 @@ def cleanup_temp_files(temp_dir):
 
     except Exception as e:
         current_app.logger.error(f"无法清理临时目录 {temp_dir}: {e}")
+
+
+def add_page_numbers_to_pdf(pdf_path, font_path, header_page_count=0, font_size=10):
+    """为PDF的每一页添加页码, 可选择跳过头部页面"""
+    try:
+        doc = fitz.open(pdf_path)
+        temp_output_path = pdf_path + ".numbered.pdf"
+        
+        with open(font_path, "rb") as f:
+            font_buffer = f.read()
+        font = fitz.Font(fontbuffer=font_buffer)
+        font_alias = font.name.replace(" ", "")
+
+        for i, page in enumerate(doc):
+            # 跳过封面和目录页
+            if i < header_page_count:
+                continue
+
+            page.insert_font(fontname=font_alias, fontbuffer=font_buffer)
+            
+            # 页码从1开始计数
+            page_num_text = f"- {i - header_page_count + 1} -"
+            page_rect = page.rect
+            
+            text_width = font.text_length(page_num_text, fontsize=font_size)
+            p = fitz.Point(page_rect.width / 2 - text_width / 2, page_rect.height - 30)
+            
+            page.insert_text(
+                p,
+                page_num_text,
+                fontsize=font_size,
+                fontname=font_alias,
+                color=(0, 0, 0)
+            )
+
+        doc.save(temp_output_path, garbage=4, deflate=True)
+        doc.close()
+        
+        os.replace(temp_output_path, pdf_path)
+        current_app.logger.info(f"成功为 {pdf_path} 添加页码。")
+        return True
+        
+    except Exception as e:
+        current_app.logger.error(f"为PDF添加页码失败: {e}", exc_info=True)
+        if 'temp_output_path' in locals() and os.path.exists(temp_output_path):
+            os.unlink(temp_output_path)
+        return False
