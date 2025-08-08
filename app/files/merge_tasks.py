@@ -9,8 +9,6 @@ from flask import current_app
 import PyPDF2
 from PIL import Image
 import fitz  # PyMuPDF
-from pip._internal.utils import temp_dir
-from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -142,41 +140,51 @@ def get_file_pages_count(file_path):
         return 0
 
 
-def create_cover_page(title, subtitle="", author="", date="", font_name='simsun.ttf'):
+def create_cover_page(options):
     """创建封面页PDF"""
     try:
-        # 注册字体并获取可用字体名称
-        registered_font_name = register_font(font_name)
-        if not registered_font_name:
-            raise Exception("无法注册任何可用字体。")
+        # 从选项中提取参数
+        title = options.get('title', '默认标题')
+        subtitle = options.get('subtitle', '')
+        author = options.get('author', '')
+        date = options.get('date', '')
+        title_font_name = options.get('title_font', 'simsun.ttf')
+        title_font_size = options.get('title_font_size', 32)
+        subtitle_font_name = options.get('subtitle_font', 'simsun.ttf')
+        subtitle_font_size = options.get('subtitle_font_size', 24)
+        text_font_name = options.get('text_font', 'simsun.ttf') # 用于作者和日期
+
+        # 注册所有需要的字体
+        registered_title_font = register_font(title_font_name)
+        registered_subtitle_font = register_font(subtitle_font_name)
+        registered_text_font = register_font(text_font_name)
+
+        if not all([registered_title_font, registered_subtitle_font, registered_text_font]):
+            raise Exception("无法注册所有需要的字体。")
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
         doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
 
         # 样式
-        styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
             'CustomTitle',
-            fontName=registered_font_name,  # 使用动态字体
-            parent=styles['Title'],
-            fontSize=24,
+            fontName=registered_title_font,
+            fontSize=title_font_size,
             spaceAfter=30,
             alignment=1  # 居中
         )
 
         subtitle_style = ParagraphStyle(
             'CustomSubtitle',
-            fontName=registered_font_name,  # 使用动态字体
-            parent=styles['Normal'],
-            fontSize=16,
+            fontName=registered_subtitle_font,
+            fontSize=subtitle_font_size,
             spaceAfter=20,
             alignment=1
         )
 
         normal_style = ParagraphStyle(
             'CustomNormal',
-            fontName=registered_font_name,  # 使用动态字体
-            parent=styles['Normal'],
+            fontName=registered_text_font,
             fontSize=12,
             spaceAfter=12,
             alignment=1
@@ -206,68 +214,86 @@ def create_cover_page(title, subtitle="", author="", date="", font_name='simsun.
         return None
 
 
-def create_toc_page(file_list, font_name='simsun.ttf'):
-    """创建目录页PDF"""
+def create_toc_page(file_list, options):
+    """创建层级目录页PDF"""
     try:
-        # 注册字体并获取可用字体名称
+        # 从选项中提取参数
+        font_name = options.get('font', 'simsun.ttf')
+        font_size = options.get('font_size', 12)
+        level = options.get('level', 2) # 默认为2级目录
+        title_font_size = font_size + 6
+
         registered_font_name = register_font(font_name)
         if not registered_font_name:
-            raise Exception("无法注册任何可用字体。")
+            raise Exception("无法注册目录字体。")
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
-        doc = SimpleDocTemplate(temp_file.name, pagesize=A4)
+        doc = SimpleDocTemplate(temp_file.name, pagesize=A4, leftMargin=inch, rightMargin=inch)
 
         # 样式
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            'TOCTitle',
-            fontName=registered_font_name,  # 使用动态字体
-            parent=styles['Title'],
-            fontSize=18,
-            spaceAfter=20,
-            alignment=1
-        )
+        title_style = ParagraphStyle('TOCTitle', fontName=registered_font_name, fontSize=title_font_size, spaceAfter=20, alignment=1)
+        
+        # 为不同层级创建样式
+        level_styles = []
+        for i in range(4):
+            style = ParagraphStyle(
+                f'TOCLevel{i}',
+                fontName=registered_font_name,
+                fontSize=font_size,
+                leftIndent=i * 20, # 逐级缩进
+                spaceAfter=6
+            )
+            level_styles.append(style)
 
-        # 内容
-        story = []
-        story.append(Paragraph("目录", title_style))
-        story.append(Spacer(1, 0.3 * inch))
+        story = [Paragraph("目 录", title_style)]
+        
+        current_page = 2 # 封面页占1页
+        if options.get('enabled', True):
+             current_page += 1 # 目录页本身占1页
 
-        # 目录表格
-        toc_data = [['序号', '文件名', '页码']]
-        current_page = 1
+        last_hierarchy = {}
+        
+        for file_info in file_list:
+            hierarchy = file_info.get('hierarchy', {})
+            
+            # 根据level决定显示哪些层级
+            hierarchy_levels = ['project', 'subproject', 'stage', 'task']
+            
+            for i in range(level):
+                level_key = hierarchy_levels[i]
+                current_level_name = hierarchy.get(level_key)
+                
+                if current_level_name and current_level_name != last_hierarchy.get(level_key):
+                    # 添加层级标题
+                    story.append(Paragraph(current_level_name, level_styles[i]))
+                    last_hierarchy[level_key] = current_level_name
+            
+            # 添加文件名和页码
+            file_name = file_info.get('original_name', '未知文件')
+            # 使用一个表格来对齐文件名和页码
+            toc_entry_table = Table(
+                [[Paragraph(file_name, level_styles[level-1]), str(current_page)]],
+                colWidths=['*', 0.5*inch]
+            )
+            toc_entry_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+            ]))
+            story.append(toc_entry_table)
 
-        # 如果有封面页，页码从2开始
-        if any(file_info.get('cover_page') for file_info in file_list):
-            current_page = 2
+            current_page += file_info.get('pages_count', 1)
+            
+            # 清除较低层级的last_hierarchy，以确保它们在下一个文件中能被重新打印
+            for i in range(level, 4):
+                level_key = hierarchy_levels[i]
+                if level_key in last_hierarchy:
+                    del last_hierarchy[level_key]
 
-        # 目录页本身占1页
-        current_page += 1
-
-        for i, file_info in enumerate(file_list, 1):
-            file_name = file_info.get('original_name', f'文件{i}')
-            pages_count = file_info.get('pages_count', 1)
-            toc_data.append([str(i), file_name, str(current_page)])
-            current_page += pages_count
-
-        toc_table = Table(toc_data, colWidths=[1 * inch, 4 * inch, 1 * inch])
-        toc_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, -1), registered_font_name),  # 对整个表格使用动态字体
-            ('FONTSIZE', (0, 0), (-1, 0), 12),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
-        ]))
-
-        story.append(toc_table)
         doc.build(story)
         return temp_file.name
 
     except Exception as e:
-        current_app.logger.error(f"创建目录页失败: {e}")
+        current_app.logger.error(f"创建层级目录页失败: {e}", exc_info=True)
         return None
 
 
@@ -434,20 +460,21 @@ def generate_preview_task(task_id, project_id, selected_file_ids, merge_config):
         update_task_progress(task_id, 25, status_message="创建封面和目录...")
 
         # 从配置中获取字体信息
-        font_name = merge_config.get('font', 'simsun.ttf')
+        text_font_name = merge_config.get('text_font', 'simsun.ttf')
 
         # 创建封面页
         cover_path = None
         cover_options = merge_config.get('coverPage', {})
         if cover_options.get('enabled', False):
             print(f"任务 {task_id}: 创建封面页")
-            cover_path = create_cover_page(
-                title=cover_options.get('title', project.name),
-                subtitle=cover_options.get('subtitle', ''),
-                author=cover_options.get('author', ''),
-                date=cover_options.get('date', datetime.now().strftime('%Y-%m-%d')),
-                font_name=font_name
-            )
+            # 确保将项目名称和默认日期传递给封面
+            full_cover_options = {
+                'title': project.name,
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                **cover_options,
+                'text_font': text_font_name, # 传递正文字体用于作者和日期
+            }
+            cover_path = create_cover_page(full_cover_options)
 
         # 创建目录页
         toc_path = None
@@ -457,11 +484,18 @@ def generate_preview_task(task_id, project_id, selected_file_ids, merge_config):
             file_info_list = []
             for file_obj in files:
                 pages_count = get_file_pages_count(file_obj.file_path)
+                hierarchy = {
+                    'project': file_obj.project.name if file_obj.project else '',
+                    'subproject': file_obj.subproject.name if file_obj.subproject else '',
+                    'stage': file_obj.stage.name if file_obj.stage else '',
+                    'task': file_obj.task.name if file_obj.task else ''
+                }
                 file_info_list.append({
                     'original_name': file_obj.original_name,
-                    'pages_count': pages_count
+                    'pages_count': pages_count,
+                    'hierarchy': hierarchy
                 })
-            toc_path = create_toc_page(file_info_list, font_name=font_name)
+            toc_path = create_toc_page(file_info_list, options=toc_options)
 
         update_task_progress(task_id, 40, status_message="合并PDF文件...")
 
@@ -580,19 +614,19 @@ def generate_final_pdf_task(task_id, project_id, selected_file_ids, merge_config
         update_task_progress(task_id, 20, status_message="准备合并文件...")
 
         # 从配置中获取字体信息
-        font_name = merge_config.get('font', 'simsun.ttf')
+        text_font_name = merge_config.get('text_font', 'simsun.ttf')
 
         # 创建封面页
         cover_path = None
         cover_options = merge_config.get('coverPage', {})
         if cover_options.get('enabled', False):
-            cover_path = create_cover_page(
-                title=cover_options.get('title', project.name),
-                subtitle=cover_options.get('subtitle', ''),
-                author=cover_options.get('author', ''),
-                date=cover_options.get('date', datetime.now().strftime('%Y-%m-%d')),
-                font_name=font_name
-            )
+            full_cover_options = {
+                'title': project.name,
+                'date': datetime.now().strftime('%Y-%m-%d'),
+                **cover_options,
+                'text_font': text_font_name,
+            }
+            cover_path = create_cover_page(full_cover_options)
 
         # 创建目录页
         toc_path = None
@@ -601,11 +635,18 @@ def generate_final_pdf_task(task_id, project_id, selected_file_ids, merge_config
             file_info_list = []
             for file_obj in files:
                 pages_count = get_file_pages_count(file_obj.file_path)
+                hierarchy = {
+                    'project': file_obj.project.name if file_obj.project else '',
+                    'subproject': file_obj.subproject.name if file_obj.subproject else '',
+                    'stage': file_obj.stage.name if file_obj.stage else '',
+                    'task': file_obj.task.name if file_obj.task else ''
+                }
                 file_info_list.append({
                     'original_name': file_obj.original_name,
-                    'pages_count': pages_count
+                    'pages_count': pages_count,
+                    'hierarchy': hierarchy
                 })
-            toc_path = create_toc_page(file_info_list, font_name=font_name)
+            toc_path = create_toc_page(file_info_list, options=toc_options)
 
         update_task_progress(task_id, 40, status_message="合并PDF文件...")
 
@@ -616,49 +657,14 @@ def generate_final_pdf_task(task_id, project_id, selected_file_ids, merge_config
         # 生成最终文件路径
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         final_filename = f"{project.name}_merged_{timestamp}.pdf"
-        # temp_merged_path = os.path.join(output_dir, f"temp_{final_filename}")
-        #
-        # # 按照文件选择顺序合并PDF
-        # file_paths_in_order = [file_obj.file_path for file_obj in files]
-        # success = merge_pdfs(file_paths_in_order, temp_merged_path, cover_path, toc_path, pages_to_delete_indices)
-        #
-        # if not success:
-        #     raise Exception("PDF合并失败")
-        #
-        # update_task_progress(task_id, 80, status_message="优化最终文件...")
 
         # 最终文件路径
         final_file_path = os.path.join(output_dir, final_filename)
 
         # 如果有页面删除操作，处理页面删除
-        # if pages_to_delete_indices and len(pages_to_delete_indices) > 0:
-        #     try:
-        #         import PyPDF2
-        #         reader = PyPDF2.PdfReader(temp_merged_path)
-        #         writer = PyPDF2.PdfWriter()
         file_paths_in_order = [f.file_path for f in files]
         if not merge_pdfs(file_paths_in_order, final_file_path, cover_path, toc_path, pages_to_delete_indices):
-            raise Exception("Failed to merge final PDF")
-            # # 添加未被删除的页面
-            # for i, page in enumerate(reader.pages):
-            #     if i not in pages_to_delete_indices:
-            #         writer.add_page(page)
-
-        #         # 写入最终文件
-        #         with open(final_file_path, 'wb') as output_file:
-        #             writer.write(output_file)
-        #
-        #         current_app.logger.info(f"已删除 {len(pages_to_delete_indices)} 个页面")
-        #     except Exception as e:
-        #         current_app.logger.error(f"删除页面时出错: {e}")
-        #         # 如果删除页面失败，使用原文件
-        #         shutil.move(temp_merged_path, final_file_path)
-        # else:
-        #     # 没有页面删除，直接移动文件
-        #     shutil.move(temp_merged_path, final_file_path)
-        #
-        # update_task_progress(task_id, 90, status_message="保存最终文件...")
-
+            raise Exception("无法合并最终 PDF")
         # 更新任务信息
         merge_task = FileMergeTask.query.filter_by(task_id=task_id).first()
         if merge_task:
@@ -666,33 +672,17 @@ def generate_final_pdf_task(task_id, project_id, selected_file_ids, merge_config
             merge_task.final_file_name = final_filename
             db.session.commit()
 
-        # # 清理临时文件
-        # if cover_path and os.path.exists(cover_path):
-        #     os.unlink(cover_path)
-        # if toc_path and os.path.exists(toc_path):
-        #     os.unlink(toc_path)
-        # if os.path.exists(temp_merged_path):
-        #     os.unlink(temp_merged_path)
         return {'final_file_path': final_file_path, 'final_filename': final_filename}
-        # update_task_progress(task_id, 100, FileMergeTaskStatusEnum.COMPLETED, "最终PDF生成完成")
-
-        # return {
-        #     'final_file_path': final_file_path,
-        #     'final_filename': final_filename
-        # }
 
     except Exception as e:
-        # current_app.logger.error(f"生成最终PDF任务失败: {e}")
-        # update_task_progress(task_id, 100, FileMergeTaskStatusEnum.FAILED, "生成最终PDF失败", str(e))
-        # raise
         current_app.logger.error(f"Final PDF task {task_id} failed: {e}", exc_info=True)
-        update_task_progress(task_id, 100, FileMergeTaskStatusEnum.FAILED, "Final PDF generation failed", str(e))
+        update_task_progress(task_id, 100, FileMergeTaskStatusEnum.FAILED, "最终 PDF 生成失败", str(e))
     finally:
         if 'cover_path' in locals() and cover_path:
             os.unlink(cover_path)
         if 'toc_path' in locals() and toc_path:
             os.unlink(toc_path)
-            update_task_progress(task_id, 100, FileMergeTaskStatusEnum.COMPLETED, "Final PDF generated successfully")
+            update_task_progress(task_id, 100, FileMergeTaskStatusEnum.COMPLETED, "最终 PDF 生成成功")
 
 
 def cleanup_temp_files(temp_dir):
@@ -700,9 +690,7 @@ def cleanup_temp_files(temp_dir):
     try:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-            # current_app.logger.info(f"清理临时目录: {temp_dir}")
-            current_app.logger.info(f"Cleaned up temporary directory: {temp_dir}")
+            current_app.logger.info(f"清理了临时目录： {temp_dir}")
 
     except Exception as e:
-        # current_app.logger.error(f"清理临时文件失败: {e}")
-        current_app.logger.error(f"Failed to clean up temp directory {temp_dir}: {e}")
+        current_app.logger.error(f"无法清理临时目录 {temp_dir}: {e}")
