@@ -106,6 +106,8 @@ class Project(db.Model):
     deadline = db.Column(db.DateTime)
     progress = db.Column(db.Float, default=0.0)
     status = db.Column(db.Enum(StatusEnum), default=StatusEnum.PENDING)
+    edit_count = db.Column(db.Integer, default=0, comment="编辑次数")
+    total_edit_duration = db.Column(db.Integer, default=0, comment="总编辑时长(秒)")
 
     employee = db.relationship('User', backref=db.backref('projects', passive_deletes=True))
     subprojects = db.relationship('Subproject', back_populates='project', lazy='dynamic', cascade='all, delete-orphan')
@@ -135,6 +137,8 @@ class Subproject(db.Model):
     status = db.Column(db.Enum(StatusEnum), default=StatusEnum.PENDING)
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    edit_count = db.Column(db.Integer, default=0, comment="编辑次数")
+    total_edit_duration = db.Column(db.Integer, default=0, comment="总编辑时长(秒)")
 
     project = db.relationship('Project', back_populates='subprojects')
     # 多对多
@@ -157,6 +161,8 @@ class ProjectStage(db.Model):
     end_date = db.Column(db.Date)
     progress = db.Column(db.Integer, default=0)
     status = db.Column(db.Enum(StatusEnum), default=StatusEnum.PENDING)
+    edit_count = db.Column(db.Integer, default=0, comment="编辑次数")
+    total_edit_duration = db.Column(db.Integer, default=0, comment="总编辑时长(秒)")
 
     project = db.relationship('Project', back_populates='stages')
     subproject = db.relationship('Subproject', back_populates='stages')
@@ -174,6 +180,8 @@ class StageTask(db.Model):
     progress = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.now)
     updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    edit_count = db.Column(db.Integer, default=0, comment="编辑次数")
+    total_edit_duration = db.Column(db.Integer, default=0, comment="总编辑时长(秒)")
 
     stage = db.relationship('ProjectStage', back_populates='tasks')
     progress_updates = db.relationship('TaskProgressUpdate', back_populates='task', cascade='all, delete-orphan')
@@ -569,3 +577,16 @@ class Alert(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     user = db.relationship('User', backref=db.backref('alerts', cascade='all, delete-orphan'))
+
+
+# ------------------- 实体编辑活动模型 (Entity Edit Activity) -------------------
+class UserEntityActivity(db.Model):
+    __tablename__ = 'user_entity_activities'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    entity_type = db.Column(db.String(50), nullable=False, comment="实体类型, e.g., 'project', 'task'")
+    entity_id = db.Column(db.Integer, nullable=False, comment="实体ID")
+    duration_seconds = db.Column(db.Integer, nullable=False, comment="本次编辑时长(秒)")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    user = db.relationship('User', backref=db.backref('entity_activities', cascade='all, delete-orphan'))

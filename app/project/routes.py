@@ -6,16 +6,65 @@ from sqlalchemy import func
 
 from . import project_bp
 from .. import db
-from ..models import Project, User, RoleEnum, Subproject, ProjectStage, StageTask, StatusEnum, TaskProgressUpdate, \
-    subproject_members
+from ..models import Project, User, RoleEnum, Subproject, ProjectStage, StageTask, StatusEnum, TaskProgressUpdate,     subproject_members, UserEntityActivity
 from ..decorators import permission_required, log_activity
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # --- 辅助函数 (Helper Functions) ---
+
+def _track_entity_activity(entity, entity_type_str):
+    """
+    辅助函数，用于追踪实体的编辑活动。
+    期望前端在请求的JSON中提供 'startTime' 字段 (ISO 8601 格式的字符串)。
+    """
+    data = request.get_json()
+    start_time_str = data.get('startTime')
+
+    if not start_time_str:
+        # 如果前端没有提供 startTime，则不执行任何操作
+        return
+
+    try:
+        # 解析带时区信息的ISO格式时间字符串
+        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        
+        # 确保它是UTC时间
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        
+        end_time = datetime.now(timezone.utc)
+        duration = (end_time - start_time).total_seconds()
+        
+        # 确保时长是合理的，例如，不为负数且不超过某个阈值（比如12小时）
+        if 0 <= duration < 43200:
+            duration_seconds = int(duration)
+            
+            # 1. 创建详细的活动记录
+            activity_log = UserEntityActivity(
+                user_id=current_user.id,
+                entity_type=entity_type_str,
+                entity_id=entity.id,
+                duration_seconds=duration_seconds
+            )
+            db.session.add(activity_log)
+            
+            # 2. 更新实体上的统计字段
+            current_count = getattr(entity, 'edit_count', 0)
+            current_duration = getattr(entity, 'total_edit_duration', 0)
+            
+            setattr(entity, 'edit_count', (current_count or 0) + 1)
+            setattr(entity, 'total_edit_duration', (current_duration or 0) + duration_seconds)
+
+    except (ValueError, TypeError) as e:
+        # 如果时间格式错误或数据有问题，则记录错误但不要让请求失败
+        print(f"Error processing startTime for activity tracking: {e}")
+
+
 def project_to_json(project):
     """将Project对象转换为JSON格式"""
     subprojects = project.subprojects.all()
+
     if not subprojects:
         progress = 0
     else:
@@ -212,6 +261,8 @@ def update_project(project_id):
     project.deadline = datetime.fromisoformat(data['deadline']) if data.get('deadline') else project.deadline
     if data.get('status'):
         project.status = StatusEnum[data.get('status').upper()]
+    
+    _track_entity_activity(project, 'project')
     db.session.commit()
     return jsonify(project_to_json(project)), 200
 
@@ -316,6 +367,8 @@ def create_subproject(project_id):
         new_subproject.members.extend(members)
 
     db.session.add(new_subproject)
+    db.session.flush()
+    _track_entity_activity(new_subproject, 'subproject')
     db.session.commit()
     return jsonify(subproject_to_json(new_subproject)), 201
 
@@ -360,6 +413,7 @@ def update_subproject(subproject_id):
     if data.get('status'):
         subproject.status = StatusEnum[data.get('status').upper()]
     subproject.updated_at = datetime.now()
+    _track_entity_activity(subproject, 'subproject')
     db.session.commit()
     return jsonify(subproject_to_json(subproject)), 200
 
@@ -405,6 +459,7 @@ def create_stage(subproject_id):
     db.session.add(new_stage)
     db.session.flush()  # Flush 用于填充 new_stage 上的关系
     update_parent_statuses(new_stage)
+    _track_entity_activity(new_stage, 'stage')
     db.session.commit()  # 提交所有更改
     return jsonify(stage_to_json(new_stage)), 201
 
@@ -455,6 +510,7 @@ def update_stage(stage_id):
     stage.end_date = datetime.fromisoformat(data['end_date']) if data.get('end_date') else stage.end_date
     if data.get('status'):
         stage.status = StatusEnum[data.get('status').upper()]
+    _track_entity_activity(stage, 'stage')
     db.session.commit()
     return jsonify(stage_to_json(stage)), 200
 
@@ -482,6 +538,7 @@ def create_task(stage_id):
     db.session.add(new_task)
     db.session.flush()  # Flush 用于填充 new_task 上的关系
     update_parent_statuses(new_task)
+    _track_entity_activity(new_task, 'task')
     db.session.commit()  # 提交所有更改
     return jsonify(task_to_json(new_task)), 201
 
@@ -533,6 +590,7 @@ def update_task(task_id):
     task.name = data.get('name', task.name)
     task.description = data.get('description', task.description)
     task.due_date = datetime.fromisoformat(data['due_date']) if data.get('due_date') else task.due_date
+    _track_entity_activity(task, 'task')
     db.session.commit()
     return jsonify(task_to_json(task)), 200
 
