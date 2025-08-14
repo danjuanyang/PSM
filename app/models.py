@@ -590,3 +590,163 @@ class UserEntityActivity(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     user = db.relationship('User', backref=db.backref('entity_activities', cascade='all, delete-orphan'))
+
+
+# ------------------- 邮件系统模型 (Email System Models) -------------------
+
+class EmailTemplateTypeEnum(PyEnum):
+    WEEKLY_REPORT = 'weekly_report'  # 周报
+    MONTHLY_REPORT = 'monthly_report'  # 月报
+    CLOCK_IN_SUMMARY = 'clock_in_summary'  # 补卡汇总
+    PROJECT_DEADLINE = 'project_deadline'  # 项目到期提醒
+    CUSTOM = 'custom'  # 自定义模板
+
+
+class EmailTaskFrequencyEnum(PyEnum):
+    ONCE = 'once'  # 一次性
+    DAILY = 'daily'  # 每天
+    WEEKLY = 'weekly'  # 每周
+    MONTHLY = 'monthly'  # 每月
+
+
+class EmailStatusEnum(PyEnum):
+    PENDING = 'pending'  # 待发送
+    SENDING = 'sending'  # 发送中
+    SUCCESS = 'success'  # 发送成功
+    FAILED = 'failed'  # 发送失败
+    CANCELLED = 'cancelled'  # 已取消
+
+
+class EmailConfig(db.Model):
+    """邮件配置表 - 存储SMTP服务器配置"""
+    __tablename__ = 'email_configs'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, comment="配置名称")
+    smtp_host = db.Column(db.String(255), nullable=False, comment="SMTP服务器地址")
+    smtp_port = db.Column(db.Integer, default=587, comment="SMTP端口")
+    smtp_use_tls = db.Column(db.Boolean, default=True, comment="是否使用TLS")
+    smtp_use_ssl = db.Column(db.Boolean, default=False, comment="是否使用SSL")
+    sender_email = db.Column(db.String(255), nullable=False, comment="发件人邮箱")
+    sender_name = db.Column(db.String(100), comment="发件人名称")
+    username = db.Column(db.String(255), nullable=False, comment="认证用户名")
+    password = db.Column(db.String(255), nullable=False, comment="认证密码(加密存储)")
+    is_active = db.Column(db.Boolean, default=True, comment="是否启用")
+    is_default = db.Column(db.Boolean, default=False, comment="是否为默认配置")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 关系
+    tasks = db.relationship('EmailTask', back_populates='email_config', cascade='all, delete-orphan')
+    logs = db.relationship('EmailLog', back_populates='email_config')
+
+
+class EmailTemplate(db.Model):
+    """邮件模板表 - 存储邮件模板内容"""
+    __tablename__ = 'email_templates'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, comment="模板名称")
+    template_type = db.Column(db.Enum(EmailTemplateTypeEnum), nullable=False, comment="模板类型")
+    subject = db.Column(db.String(255), nullable=False, comment="邮件主题(支持变量)")
+    body_html = db.Column(db.Text, comment="HTML格式邮件内容")
+    body_text = db.Column(db.Text, comment="纯文本格式邮件内容")
+    variables = db.Column(db.JSON, comment="可用变量列表及说明")
+    description = db.Column(db.String(500), comment="模板描述")
+    is_active = db.Column(db.Boolean, default=True, comment="是否启用")
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'))
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 关系
+    creator = db.relationship('User', backref='created_email_templates')
+    tasks = db.relationship('EmailTask', back_populates='template', cascade='all, delete-orphan')
+
+
+class EmailRecipientGroup(db.Model):
+    """邮件接收组表 - 管理收件人分组"""
+    __tablename__ = 'email_recipient_groups'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, unique=True, comment="组名称")
+    description = db.Column(db.String(255), comment="组描述")
+    # 收件人配置: 可以是角色、具体用户ID列表、邮箱列表
+    recipient_roles = db.Column(db.JSON, comment="接收角色列表，如['LEADER', 'MEMBER']")
+    recipient_user_ids = db.Column(db.JSON, comment="具体用户ID列表")
+    recipient_emails = db.Column(db.JSON, comment="外部邮箱列表")
+    is_active = db.Column(db.Boolean, default=True, comment="是否启用")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 关系
+    tasks = db.relationship('EmailTask', back_populates='recipient_group')
+
+
+class EmailTask(db.Model):
+    """邮件任务表 - 定时任务配置"""
+    __tablename__ = 'email_tasks'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False, comment="任务名称")
+    description = db.Column(db.String(500), comment="任务描述")
+    template_id = db.Column(db.Integer, db.ForeignKey('email_templates.id', ondelete='SET NULL'))
+    email_config_id = db.Column(db.Integer, db.ForeignKey('email_configs.id', ondelete='SET NULL'))
+    recipient_group_id = db.Column(db.Integer, db.ForeignKey('email_recipient_groups.id', ondelete='SET NULL'))
+    
+    # 调度配置
+    frequency = db.Column(db.Enum(EmailTaskFrequencyEnum), nullable=False, comment="执行频率")
+    cron_expression = db.Column(db.String(100), comment="Cron表达式(高级调度)")
+    send_time = db.Column(db.Time, comment="发送时间")
+    send_day_of_week = db.Column(db.Integer, comment="每周几发送(0-6, 0=周一)")
+    send_day_of_month = db.Column(db.Integer, comment="每月几号发送(1-31)")
+    
+    # 数据配置
+    data_query_config = db.Column(db.JSON, comment="数据查询配置")
+    additional_recipients = db.Column(db.JSON, comment="额外收件人列表")
+    
+    # 状态
+    is_active = db.Column(db.Boolean, default=True, comment="是否启用")
+    last_run_at = db.Column(db.DateTime, comment="上次执行时间")
+    next_run_at = db.Column(db.DateTime, comment="下次执行时间")
+    created_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'))
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    
+    # 关系
+    template = db.relationship('EmailTemplate', back_populates='tasks')
+    email_config = db.relationship('EmailConfig', back_populates='tasks')
+    recipient_group = db.relationship('EmailRecipientGroup', back_populates='tasks')
+    creator = db.relationship('User', backref='created_email_tasks')
+    logs = db.relationship('EmailLog', back_populates='task', cascade='all, delete-orphan')
+
+
+class EmailLog(db.Model):
+    """邮件发送记录表 - 记录所有邮件发送历史"""
+    __tablename__ = 'email_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    task_id = db.Column(db.Integer, db.ForeignKey('email_tasks.id', ondelete='SET NULL'))
+    email_config_id = db.Column(db.Integer, db.ForeignKey('email_configs.id', ondelete='SET NULL'))
+    
+    # 邮件内容
+    subject = db.Column(db.String(255), nullable=False, comment="邮件主题")
+    body = db.Column(db.Text, comment="邮件内容")
+    recipients = db.Column(db.JSON, nullable=False, comment="收件人列表")
+    cc_recipients = db.Column(db.JSON, comment="抄送列表")
+    bcc_recipients = db.Column(db.JSON, comment="密送列表")
+    
+    # 发送状态
+    status = db.Column(db.Enum(EmailStatusEnum), default=EmailStatusEnum.PENDING, comment="发送状态")
+    error_message = db.Column(db.Text, comment="错误信息")
+    retry_count = db.Column(db.Integer, default=0, comment="重试次数")
+    
+    # 时间记录
+    scheduled_at = db.Column(db.DateTime, comment="计划发送时间")
+    sent_at = db.Column(db.DateTime, comment="实际发送时间")
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    # 关系
+    task = db.relationship('EmailTask', back_populates='logs')
+    email_config = db.relationship('EmailConfig', back_populates='logs')
+
+
+# 添加索引
+Index('idx_email_logs_task_id', EmailLog.task_id)
+Index('idx_email_logs_status', EmailLog.status)
+Index('idx_email_logs_created_at', EmailLog.created_at)
+Index('idx_email_tasks_next_run_at', EmailTask.next_run_at)

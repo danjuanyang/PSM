@@ -86,6 +86,7 @@ def create_app(config_name='default'):
     from .training import training_bp
     from .activity import activity_bp
     from .analytics import analytics_bp
+    from .email import email_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -100,6 +101,7 @@ def create_app(config_name='default'):
     app.register_blueprint(training_bp)
     app.register_blueprint(activity_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(email_bp, url_prefix='/email')
     # e. 启动临时文件清理调度器
     from .files.cleanup_scheduler import cleanup_scheduler
     cleanup_scheduler.init_app(app)
@@ -107,6 +109,11 @@ def create_app(config_name='default'):
     # 在应用上下文中启动清理调度器
     with app.app_context():
         cleanup_scheduler.start_cleanup_scheduler()
+    
+    # f. 启动邮件任务调度器
+    from .email.scheduler import email_scheduler
+    with app.app_context():
+        email_scheduler.init_tasks()
 
     # f. Shell 上下文处理器 (可选，但推荐)
     @app.shell_context_processor
