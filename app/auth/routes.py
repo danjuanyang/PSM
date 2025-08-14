@@ -7,7 +7,8 @@ from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
 from ..decorators import log_activity
-from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession, Project, Alert, \
+    AnnouncementReadStatus, StageTask, StatusEnum, Announcement
 from .. import db, bcrypt
 
 
@@ -381,3 +382,78 @@ def registration_settings():
             return jsonify({"message": "设置已更新"}), 200
         else:
             return jsonify({"error": ".env 文件未找到"}), 500
+
+
+@auth_bp.route('/dashboard_stats', methods=['GET'])
+@login_required
+def dashboard_stats():
+    """
+    为Dashboard提供关键指标的统计数据。
+    """
+    try:
+        # 1. 进行中的项目数
+        in_progress_projects = Project.query.filter_by(status=StatusEnum.IN_PROGRESS).count()
+
+        # 2. 待办任务数 (未开始或进行中)
+        pending_tasks = StageTask.query.filter(
+            StageTask.status.in_([StatusEnum.PENDING, StatusEnum.IN_PROGRESS])
+        ).count()
+
+        # 3. 未读公告数
+        unread_announcements = db.session.query(Announcement.id).outerjoin(
+            AnnouncementReadStatus,
+            (Announcement.id == AnnouncementReadStatus.announcement_id) &
+            (AnnouncementReadStatus.user_id == current_user.id)
+        ).filter(
+            (AnnouncementReadStatus.is_read == None) | (AnnouncementReadStatus.is_read == False)
+        ).count()
+
+        # 4. 未读提醒数
+        unread_alerts = Alert.query.filter_by(user_id=current_user.id, is_read=False).count()
+
+        # 5. 最近的项目更新 (示例：最近5条)
+        recent_projects = Project.query.order_by(Project.start_date.desc()).limit(5).all()
+        recent_projects_data = [{
+            'id': p.id,
+            'name': p.name,
+            'employee_name': p.employee.username if p.employee else 'N/A',
+            'progress': p.progress,
+            'status': p.status.value if p.status else None
+        } for p in recent_projects]
+
+        # 6. 最近的动态 (公告和提醒)
+        recent_alerts = Alert.query.filter_by(user_id=current_user.id).order_by(Alert.created_at.desc()).limit(5).all()
+        
+        # 获取所有公告，并在Python中判断是否已读
+        all_announcements = Announcement.query.order_by(Announcement.created_at.desc()).limit(10).all()
+        read_announcement_ids = {item.announcement_id for item in AnnouncementReadStatus.query.filter_by(user_id=current_user.id, is_read=True).all()}
+
+        recent_announcements_data = [{
+            'id': a.id,
+            'title': a.title,
+            'created_at': a.created_at.isoformat(),
+            'is_read_by_current_user': a.id not in read_announcement_ids
+        } for a in all_announcements]
+
+
+        return jsonify({
+            "data": {
+                "stats": {
+                    "in_progress_projects": in_progress_projects,
+                    "pending_tasks": pending_tasks,
+                    "unread_announcements": unread_announcements,
+                    "unread_alerts": unread_alerts,
+                },
+                "recent_projects": recent_projects_data,
+                "recent_announcements": recent_announcements_data,
+                "recent_alerts": [{
+                    'id': a.id,
+                    'message': a.message,
+                    'created_at': a.created_at.isoformat()
+                } for a in recent_alerts]
+            }
+        })
+
+    except Exception as e:
+        current_app.logger.error(f"获取Dashboard统计数据失败: {e}")
+        return jsonify({"error": "获取Dashboard统计数据失败"}), 500
