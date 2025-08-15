@@ -16,7 +16,7 @@ from .. import db
 from ..models import (
     EmailConfig, EmailTemplate, EmailTask, EmailRecipientGroup, 
     EmailLog, EmailStatusEnum, EmailTemplateTypeEnum, EmailTaskFrequencyEnum,
-    User, RoleEnum, Project, ReportClockinDetail, RequestTypeEnum
+    User, RoleEnum, Project, ReportClockinDetail, RequestTypeEnum, ProjectUpdate
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +87,7 @@ class EmailService:
         Returns:
             发送结果
         """
+        logger.info(f"尝试将电子邮件发送至{recipients} 使用配置'{config.name}'")
         try:
             # 创建邮件消息
             msg = MIMEMultipart('alternative')
@@ -130,7 +131,7 @@ class EmailService:
                 try:
                     password = self.encryption.decrypt_password(config.password)
                 except Exception as decrypt_error:
-                    logger.error(f"Password decryption failed: {str(decrypt_error)}")
+                    logger.error(f"密码解密失败： {str(decrypt_error)}")
                     # 如果解密失败，尝试使用原始密码（可能还未加密）
                     password = config.password
             else:
@@ -146,13 +147,14 @@ class EmailService:
             server.send_message(msg, config.sender_email, all_recipients)
             server.quit()
             
+            logger.info("通过 SMTP 成功发送电子邮件。")
             return {
                 'success': True,
-                'message': 'Email sent successfully'
+                'message': '电子邮件发送成功'
             }
             
         except Exception as e:
-            logger.error(f"Failed to send email: {str(e)}")
+            logger.error(f"SMTP 错误：无法发送电子邮件。原因： {str(e)}", exc_info=True)
             return {
                 'success': False,
                 'error': str(e)
@@ -192,7 +194,7 @@ class EmailService:
                 'body_text': rendered_text
             }
         except Exception as e:
-            logger.error(f"Failed to render template: {str(e)}")
+            logger.error(f"无法渲染模板： {str(e)}")
             raise
     
     def get_recipients_from_group(self, group: EmailRecipientGroup) -> List[str]:
@@ -219,7 +221,7 @@ class EmailService:
                     users = User.query.filter_by(role=role).all()
                     recipients.extend([u.email for u in users if u.email])
                 except KeyError:
-                    logger.warning(f"Invalid role: {role_str}")
+                    logger.warning(f"角色无效： {role_str}")
         
         # 根据用户ID获取邮箱
         if group.recipient_user_ids:
@@ -265,10 +267,10 @@ class EmailService:
         """准备周报数据"""
         start_date = datetime.now() - timedelta(days=7)
         
-        # 查询本周项目进展
-        projects = Project.query.filter(
-            Project.updated_at >= start_date
-        ).all()
+        # 查询本周有更新的项目
+        projects = Project.query.join(Project.updates).filter(
+            ProjectUpdate.created_at >= start_date
+        ).distinct().all()
         
         return {
             'week_start': start_date.strftime('%Y-%m-%d'),
@@ -291,7 +293,7 @@ class EmailService:
         
         # 查询本月项目数据
         projects = Project.query.filter(
-            Project.created_at >= start_date
+            Project.start_date >= start_date
         ).all()
         
         completed_projects = [p for p in projects if p.status and p.status.value == 'completed']
@@ -380,22 +382,15 @@ class EmailService:
         Returns:
             是否成功
         """
+        logger.info(f"开始处理电子邮件任务 {task_id} ('{EmailTask.query.get(task_id).name}')")
         task = EmailTask.query.get(task_id)
         if not task or not task.is_active:
+            logger.warning(f"任务 {task_id} 不活跃或不存在。中止.")
             return False
         
-        # 创建日志记录
-        log = EmailLog(
-            task_id=task.id,
-            email_config_id=task.email_config_id,
-            status=EmailStatusEnum.SENDING,
-            scheduled_at=datetime.now()
-        )
-        db.session.add(log)
-        db.session.commit()
-        
+        log = None  # 初始化log变量
         try:
-            # 获取收件人
+            # 1. 获取收件人
             recipients = []
             if task.recipient_group:
                 recipients = self.get_recipients_from_group(task.recipient_group)
@@ -403,13 +398,31 @@ class EmailService:
                 recipients.extend(task.additional_recipients)
             
             if not recipients:
-                raise ValueError("No recipients found")
+                raise ValueError("未找到任务的收件人")
             
-            # 准备数据并渲染模板
+            logger.info(f"任务 {task_id}: 收件人解析为： {recipients}")
+            
+            # 2. 准备数据并渲染模板
+            logger.info(f"任务 {task_id}:准备和渲染模板...")
             context = self.prepare_email_data(task)
             rendered = self.render_template(task.template, context)
+            logger.info(f"任务 {task_id}: 模板渲染成功。主题： '{rendered['subject']}'")
+
+            # 3. 创建并填充完整的日志记录
+            log = EmailLog(
+                task_id=task.id,
+                email_config_id=task.email_config_id,
+                status=EmailStatusEnum.SENDING,
+                scheduled_at=datetime.now(),
+                subject=rendered['subject'],
+                body=rendered['body_html'] or rendered['body_text'],
+                recipients=recipients
+            )
+            db.session.add(log)
+            db.session.commit()
             
-            # 发送邮件
+            # 4. 发送邮件
+            logger.info(f"任务 {task_id}: 继续通过 SMTP 服务发送电子邮件.")
             result = self.send_email(
                 config=task.email_config,
                 recipients=recipients,
@@ -418,25 +431,41 @@ class EmailService:
                 body_text=rendered['body_text']
             )
             
-            # 更新日志
+            # 5. 根据发送结果更新日志状态
             if result['success']:
                 log.status = EmailStatusEnum.SUCCESS
                 log.sent_at = datetime.now()
                 task.last_run_at = datetime.now()
+                logger.info(f"任务 {task_id}: 发送电子邮件并将日志更新为成功.")
             else:
                 log.status = EmailStatusEnum.FAILED
-                log.error_message = result.get('error', 'Unknown error')
-            
-            log.subject = rendered['subject']
-            log.body = rendered['body_html'] or rendered['body_text']
-            log.recipients = recipients
+                error_msg = result.get('error', 'Unknown error')
+                log.error_message = error_msg
+                logger.error(f"Email sending failed for task {task_id}. Reason: {error_msg}")
             
             db.session.commit()
             return result['success']
             
         except Exception as e:
-            logger.error(f"Failed to send task email: {str(e)}")
-            log.status = EmailStatusEnum.FAILED
-            log.error_message = str(e)
-            db.session.commit()
+            logger.error(f"An unexpected error occurred in send_task_email for task {task_id}: {str(e)}", exc_info=True)
+            # 如果在日志创建后发生异常，也要更新日志
+            if log and log.id: # 确保log对象已提交到数据库
+                log.status = EmailStatusEnum.FAILED
+                log.error_message = str(e)
+                db.session.commit()
+            elif not log: # 如果在创建log之前就失败了
+                # 创建一个失败的日志条目
+                try:
+                    fail_log = EmailLog(
+                        task_id=task.id,
+                        email_config_id=task.email_config_id,
+                        subject=f"[Task Failed] {task.name}",
+                        recipients=[],
+                        status=EmailStatusEnum.FAILED,
+                        error_message=str(e)
+                    )
+                    db.session.add(fail_log)
+                    db.session.commit()
+                except Exception as log_e:
+                    logger.error(f"Could not even create a failure log for task {task_id}: {log_e}")
             return False

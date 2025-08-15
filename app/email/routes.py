@@ -1,7 +1,7 @@
 # PSM/app/email/routes.py
 from flask import request, jsonify
 from flask_login import login_required, current_user
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 import json
 import re
 import logging
@@ -54,21 +54,21 @@ def get_email_configs():
 def create_email_config():
     """创建邮件配置"""
     data = request.get_json()
-    
+
     # 验证必填字段
     required_fields = ['name', 'smtp_host', 'sender_email', 'username', 'password']
     for field in required_fields:
         if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
-    
+            return jsonify({'error': f'缺少必填字段： {field}'}), 400
+
     # 加密密码
     encryption = EmailEncryption()
     encrypted_password = encryption.encrypt_password(data['password'])
-    
+
     # 如果设置为默认，取消其他配置的默认状态
     if data.get('is_default'):
         EmailConfig.query.update({'is_default': False})
-    
+
     config = EmailConfig(
         name=data['name'],
         smtp_host=data['smtp_host'],
@@ -82,12 +82,12 @@ def create_email_config():
         is_active=data.get('is_active', True),
         is_default=data.get('is_default', False)
     )
-    
+
     db.session.add(config)
     db.session.commit()
-    
+
     return jsonify({
-        'message': 'Email config created successfully',
+        'message': '电子邮件配置已成功创建',
         'config_id': config.id
     })
 
@@ -99,7 +99,7 @@ def update_email_config(config_id):
     """更新邮件配置"""
     config = EmailConfig.query.get_or_404(config_id)
     data = request.get_json()
-    
+
     # 更新字段
     if 'name' in data:
         config.name = data['name']
@@ -125,11 +125,11 @@ def update_email_config(config_id):
     if 'is_default' in data and data['is_default']:
         EmailConfig.query.filter(EmailConfig.id != config_id).update({'is_default': False})
         config.is_default = True
-    
+
     config.updated_at = datetime.now()
     db.session.commit()
-    
-    return jsonify({'message': 'Email config updated successfully'})
+
+    return jsonify({'message': '电子邮件配置已成功更新'})
 
 
 @email_bp.route('/configs/<int:config_id>', methods=['DELETE'])
@@ -138,16 +138,16 @@ def update_email_config(config_id):
 def delete_email_config(config_id):
     """删除邮件配置"""
     config = EmailConfig.query.get_or_404(config_id)
-    
+
     # 检查是否有任务在使用此配置
     tasks_using = EmailTask.query.filter_by(email_config_id=config_id).count()
     if tasks_using > 0:
-        return jsonify({'error': f'Cannot delete config, {tasks_using} tasks are using it'}), 400
-    
+        return jsonify({'error': f'无法删除配置， {tasks_using} 任务正在使用它'}), 400
+
     db.session.delete(config)
     db.session.commit()
-    
-    return jsonify({'message': 'Email config deleted successfully'})
+
+    return jsonify({'message': '电子邮件配置已成功删除'})
 
 
 @email_bp.route('/configs/<int:config_id>/test', methods=['POST'])
@@ -158,7 +158,7 @@ def test_email_config(config_id):
     try:
         config = EmailConfig.query.get_or_404(config_id)
         data = request.get_json()
-        
+
         # 获取测试邮箱地址
         test_email = data.get('test_email')
         if not test_email:
@@ -166,25 +166,25 @@ def test_email_config(config_id):
             if hasattr(current_user, 'email') and current_user.email:
                 test_email = current_user.email
             else:
-                return jsonify({'error': 'Test email address is required'}), 400
-        
+                return jsonify({'error': '测试电子邮件地址是必填项'}), 400
+
         # 验证邮箱格式
         if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', test_email):
             return jsonify({'error': 'Invalid email address format'}), 400
-        
+
         service = EmailService()
         result = service.send_email(
             config=config,
             recipients=[test_email],
-            subject='Email Configuration Test',
-            body_text='This is a test email to verify your email configuration.',
+            subject='电子邮件配置测试',
+            body_text='这是一封用于验证您的电子邮件配置的测试电子邮件。',
             body_html='<p>This is a <strong>test email</strong> to verify your email configuration.</p>'
         )
-        
+
         if result['success']:
-            return jsonify({'message': 'Test email sent successfully'})
+            return jsonify({'message': '测试电子邮件发送成功'})
         else:
-            return jsonify({'error': result.get('error', 'Failed to send test email')}), 500
+            return jsonify({'error': result.get('error', '无法发送测试电子邮件')}), 500
     except Exception as e:
         logger.error(f"Test email failed: {str(e)}", exc_info=True)
         return jsonify({'error': f'Test failed: {str(e)}'}), 500
@@ -220,19 +220,19 @@ def get_email_templates():
 def create_email_template():
     """创建邮件模板"""
     data = request.get_json()
-    
+
     # 验证必填字段
     required_fields = ['name', 'template_type', 'subject']
     for field in required_fields:
         if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
-    
+            return jsonify({'error': f'缺少必填字段：{field}'}), 400
+
     # 验证模板类型
     try:
         template_type = EmailTemplateTypeEnum[data['template_type']]
     except KeyError:
-        return jsonify({'error': 'Invalid template type'}), 400
-    
+        return jsonify({'error': '模板类型无效'}), 400
+
     template = EmailTemplate(
         name=data['name'],
         template_type=template_type,
@@ -244,12 +244,12 @@ def create_email_template():
         is_active=data.get('is_active', True),
         created_by=current_user.id
     )
-    
+
     db.session.add(template)
     db.session.commit()
-    
+
     return jsonify({
-        'message': 'Email template created successfully',
+        'message': '电子邮件模板创建成功',
         'template_id': template.id
     })
 
@@ -261,7 +261,7 @@ def update_email_template(template_id):
     """更新邮件模板"""
     template = EmailTemplate.query.get_or_404(template_id)
     data = request.get_json()
-    
+
     # 更新字段
     if 'name' in data:
         template.name = data['name']
@@ -269,7 +269,7 @@ def update_email_template(template_id):
         try:
             template.template_type = EmailTemplateTypeEnum[data['template_type']]
         except KeyError:
-            return jsonify({'error': 'Invalid template type'}), 400
+            return jsonify({'error': '模板类型无效'}), 400
     if 'subject' in data:
         template.subject = data['subject']
     if 'body_html' in data:
@@ -282,11 +282,11 @@ def update_email_template(template_id):
         template.description = data['description']
     if 'is_active' in data:
         template.is_active = data['is_active']
-    
+
     template.updated_at = datetime.now()
     db.session.commit()
-    
-    return jsonify({'message': 'Email template updated successfully'})
+
+    return jsonify({'message': '电子邮件模板更新成功'})
 
 
 @email_bp.route('/templates/<int:template_id>', methods=['DELETE'])
@@ -295,16 +295,16 @@ def update_email_template(template_id):
 def delete_email_template(template_id):
     """删除邮件模板"""
     template = EmailTemplate.query.get_or_404(template_id)
-    
+
     # 检查是否有任务在使用此模板
     tasks_using = EmailTask.query.filter_by(template_id=template_id).count()
     if tasks_using > 0:
-        return jsonify({'error': f'Cannot delete template, {tasks_using} tasks are using it'}), 400
-    
+        return jsonify({'error': f'无法删除模板， {tasks_using} 任务正在使用它'}), 400
+
     db.session.delete(template)
     db.session.commit()
-    
-    return jsonify({'message': 'Email template deleted successfully'})
+
+    return jsonify({'message': '电子邮件模板已成功删除'})
 
 
 @email_bp.route('/templates/<int:template_id>/preview', methods=['POST'])
@@ -313,17 +313,53 @@ def preview_email_template(template_id):
     """预览邮件模板"""
     template = EmailTemplate.query.get_or_404(template_id)
     data = request.get_json()
-    context = data.get('context', {})
-    
+
     service = EmailService()
+
+    # 准备预览用的上下文数据
+    preview_context = {
+        'current_date': datetime.now().strftime('%Y-%m-%d'),
+        'current_time': datetime.now().strftime('%H:%M:%S'),
+        'task_name': '示例任务'
+    }
+
+    # 根据模板类型生成示例数据
+    if template.template_type == EmailTemplateTypeEnum.WEEKLY_REPORT:
+        preview_context.update(service._prepare_weekly_report_data())
+    elif template.template_type == EmailTemplateTypeEnum.MONTHLY_REPORT:
+        preview_context.update(service._prepare_monthly_report_data())
+    elif template.template_type == EmailTemplateTypeEnum.CLOCK_IN_SUMMARY:
+        preview_context.update(service._prepare_clock_in_summary_data())
+    elif template.template_type == EmailTemplateTypeEnum.PROJECT_DEADLINE:
+        # 对于项目截止日期，创建一些虚拟数据，以确保即使没有匹配的项目也能正常工作
+        dummy_data = service._prepare_project_deadline_data()
+        if not dummy_data.get('deadline_projects'):
+            dummy_data['deadline_projects'] = [
+                {
+                    'name': '示例项目A',
+                    'deadline': (datetime.now() + timedelta(days=10)).strftime('%Y-%m-%d'),
+                    'days_remaining': 10,
+                    'progress': 50,
+                    'employee': '张三'
+                }
+            ]
+            dummy_data['total_deadline_projects'] = 1
+        preview_context.update(dummy_data)
+
+    # 合并前端传入的自定义变量 (如果前端提供了)
+    # 后端生成的关键数据将覆盖前端的任何同名键
+    frontend_context = data.get('context', {})
+    final_context = {**frontend_context, **preview_context}
+
     try:
-        rendered = service.render_template(template, context)
+        rendered = service.render_template(template, final_context)
         return jsonify({
             'subject': rendered['subject'],
             'body_html': rendered['body_html'],
             'body_text': rendered['body_text']
         })
     except Exception as e:
+        logger.error(f"Template preview failed for template {template_id}: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 400
 
 
@@ -333,7 +369,7 @@ def preview_email_template(template_id):
 @login_required
 def get_recipient_groups():
     """获取收件人组列表"""
-    groups = EmailRecipientGroup.query.filter_by(is_active=True).all()
+    groups = EmailRecipientGroup.query.all()
     return jsonify({
         'groups': [
             {
@@ -343,6 +379,7 @@ def get_recipient_groups():
                 'recipient_roles': g.recipient_roles,
                 'recipient_user_ids': g.recipient_user_ids,
                 'recipient_emails': g.recipient_emails,
+                'is_active': g.is_active,
                 'created_at': g.created_at.isoformat() if g.created_at else None
             }
             for g in groups
@@ -356,14 +393,14 @@ def get_recipient_groups():
 def create_recipient_group():
     """创建收件人组"""
     data = request.get_json()
-    
+
     if not data.get('name'):
-        return jsonify({'error': 'Group name is required'}), 400
-    
+        return jsonify({'error': '组名称为必填项'}), 400
+
     # 检查名称是否已存在
     if EmailRecipientGroup.query.filter_by(name=data['name']).first():
-        return jsonify({'error': 'Group name already exists'}), 400
-    
+        return jsonify({'error': '组名称已存在'}), 400
+
     group = EmailRecipientGroup(
         name=data['name'],
         description=data.get('description'),
@@ -372,12 +409,12 @@ def create_recipient_group():
         recipient_emails=data.get('recipient_emails', []),
         is_active=data.get('is_active', True)
     )
-    
+
     db.session.add(group)
     db.session.commit()
-    
+
     return jsonify({
-        'message': 'Recipient group created successfully',
+        'message': '收件人组创建成功',
         'group_id': group.id
     })
 
@@ -389,16 +426,17 @@ def update_recipient_group(group_id):
     """更新收件人组"""
     group = EmailRecipientGroup.query.get_or_404(group_id)
     data = request.get_json()
-    
     # 更新字段
     if 'name' in data:
-        # 检查名称是否已存在
+        new_name = data.get('name', group.name)
+    if new_name != group.name:
         existing = EmailRecipientGroup.query.filter(
             EmailRecipientGroup.name == data['name'],
+            EmailRecipientGroup.name == new_name,
             EmailRecipientGroup.id != group_id
         ).first()
         if existing:
-            return jsonify({'error': 'Group name already exists'}), 400
+            return jsonify({'error': '组名称已存在'}), 400
         group.name = data['name']
     if 'description' in data:
         group.description = data['description']
@@ -410,11 +448,8 @@ def update_recipient_group(group_id):
         group.recipient_emails = data['recipient_emails']
     if 'is_active' in data:
         group.is_active = data['is_active']
-    
-    group.updated_at = datetime.now()
     db.session.commit()
-    
-    return jsonify({'message': 'Recipient group updated successfully'})
+    return jsonify({'message': '收件人组已成功更新'})
 
 
 @email_bp.route('/recipient-groups/<int:group_id>', methods=['DELETE'])
@@ -423,16 +458,16 @@ def update_recipient_group(group_id):
 def delete_recipient_group(group_id):
     """删除收件人组"""
     group = EmailRecipientGroup.query.get_or_404(group_id)
-    
+
     # 检查是否有任务在使用此组
     tasks_using = EmailTask.query.filter_by(recipient_group_id=group_id).count()
     if tasks_using > 0:
-        return jsonify({'error': f'Cannot delete group, {tasks_using} tasks are using it'}), 400
-    
+        return jsonify({'error': f'无法删除组, {tasks_using} 任务正在使用它'}), 400
+
     db.session.delete(group)
     db.session.commit()
-    
-    return jsonify({'message': 'Recipient group deleted successfully'})
+
+    return jsonify({'message': '收件人组已成功删除'})
 
 
 # ============= 邮件任务管理 =============
@@ -476,19 +511,19 @@ def get_email_tasks():
 def create_email_task():
     """创建邮件任务"""
     data = request.get_json()
-    
+
     # 验证必填字段
     required_fields = ['name', 'template_id', 'email_config_id', 'frequency']
     for field in required_fields:
         if field not in data:
-            return jsonify({'error': f'Missing required field: {field}'}), 400
-    
+            return jsonify({'error': f'缺少必填字段：{field}'}), 400
+
     # 验证频率类型
     try:
         frequency = EmailTaskFrequencyEnum[data['frequency']]
     except KeyError:
-        return jsonify({'error': 'Invalid frequency type'}), 400
-    
+        return jsonify({'error': '无效频率类型'}), 400
+
     # 解析时间
     send_time = None
     if data.get('send_time'):
@@ -496,8 +531,8 @@ def create_email_task():
             time_parts = data['send_time'].split(':')
             send_time = time(int(time_parts[0]), int(time_parts[1]))
         except:
-            return jsonify({'error': 'Invalid send_time format'}), 400
-    
+            return jsonify({'error': 'send_time格式无效'}), 400
+
     task = EmailTask(
         name=data['name'],
         description=data.get('description'),
@@ -514,16 +549,16 @@ def create_email_task():
         is_active=data.get('is_active', True),
         created_by=current_user.id
     )
-    
+
     db.session.add(task)
     db.session.commit()
-    
+
     # 如果任务激活，添加到调度器
     if task.is_active:
         email_scheduler.schedule_task(task)
-    
+
     return jsonify({
-        'message': 'Email task created successfully',
+        'message': '电子邮件任务创建成功',
         'task_id': task.id
     })
 
@@ -535,7 +570,7 @@ def update_email_task(task_id):
     """更新邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
     data = request.get_json()
-    
+
     # 更新字段
     if 'name' in data:
         task.name = data['name']
@@ -551,7 +586,7 @@ def update_email_task(task_id):
         try:
             task.frequency = EmailTaskFrequencyEnum[data['frequency']]
         except KeyError:
-            return jsonify({'error': 'Invalid frequency type'}), 400
+            return jsonify({'error': '无效频率类型'}), 400
     if 'cron_expression' in data:
         task.cron_expression = data['cron_expression']
     if 'send_time' in data:
@@ -560,7 +595,7 @@ def update_email_task(task_id):
                 time_parts = data['send_time'].split(':')
                 task.send_time = time(int(time_parts[0]), int(time_parts[1]))
             except:
-                return jsonify({'error': 'Invalid send_time format'}), 400
+                return jsonify({'error': 'send_time格式无效'}), 400
         else:
             task.send_time = None
     if 'send_day_of_week' in data:
@@ -573,17 +608,17 @@ def update_email_task(task_id):
         task.additional_recipients = data['additional_recipients']
     if 'is_active' in data:
         task.is_active = data['is_active']
-    
+
     task.updated_at = datetime.now()
     db.session.commit()
-    
+
     # 重新调度任务
     if task.is_active:
         email_scheduler.schedule_task(task)
     else:
         email_scheduler.remove_task(task_id)
-    
-    return jsonify({'message': 'Email task updated successfully'})
+
+    return jsonify({'message': '电子邮件任务更新成功'})
 
 
 @email_bp.route('/tasks/<int:task_id>', methods=['DELETE'])
@@ -592,14 +627,14 @@ def update_email_task(task_id):
 def delete_email_task(task_id):
     """删除邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
-    
+
     # 从调度器中移除
     email_scheduler.remove_task(task_id)
-    
+
     db.session.delete(task)
     db.session.commit()
-    
-    return jsonify({'message': 'Email task deleted successfully'})
+
+    return jsonify({'message': '电子邮件任务已成功删除'})
 
 
 @email_bp.route('/tasks/<int:task_id>/run', methods=['POST'])
@@ -608,10 +643,10 @@ def delete_email_task(task_id):
 def run_email_task(task_id):
     """立即执行邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
-    
+
     email_scheduler.run_task_now(task_id)
-    
-    return jsonify({'message': 'Email task triggered successfully'})
+
+    return jsonify({'message': '电子邮件任务触发成功'})
 
 
 @email_bp.route('/tasks/<int:task_id>/toggle', methods=['POST'])
@@ -620,18 +655,18 @@ def run_email_task(task_id):
 def toggle_email_task(task_id):
     """启用/禁用邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
-    
+
     task.is_active = not task.is_active
     task.updated_at = datetime.now()
     db.session.commit()
-    
+
     if task.is_active:
         email_scheduler.schedule_task(task)
         message = 'Email task enabled'
     else:
         email_scheduler.remove_task(task_id)
         message = 'Email task disabled'
-    
+
     return jsonify({
         'message': message,
         'is_active': task.is_active
@@ -648,9 +683,9 @@ def get_email_logs():
     per_page = request.args.get('per_page', 20, type=int)
     task_id = request.args.get('task_id', type=int)
     status = request.args.get('status')
-    
+
     query = EmailLog.query
-    
+
     # 过滤条件
     if task_id:
         query = query.filter_by(task_id=task_id)
@@ -660,14 +695,14 @@ def get_email_logs():
             query = query.filter_by(status=status_enum)
         except KeyError:
             pass
-    
+
     # 分页查询
     pagination = query.order_by(EmailLog.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
     )
-    
+
     logs = pagination.items
-    
+
     return jsonify({
         'logs': [
             {
@@ -699,7 +734,7 @@ def get_email_logs():
 def get_email_log_detail(log_id):
     """获取邮件日志详情"""
     log = EmailLog.query.get_or_404(log_id)
-    
+
     return jsonify({
         'id': log.id,
         'task_id': log.task_id,
@@ -726,24 +761,24 @@ def get_email_log_detail(log_id):
 def retry_email_log(log_id):
     """重试发送失败的邮件"""
     log = EmailLog.query.get_or_404(log_id)
-    
+
     if log.status != EmailStatusEnum.FAILED:
-        return jsonify({'error': 'Can only retry failed emails'}), 400
-    
+        return jsonify({'error': '只能重试失败的电子邮件'}), 400
+
     # 更新状态为发送中
     log.status = EmailStatusEnum.SENDING
     log.retry_count += 1
     db.session.commit()
-    
+
     # 重新发送
     service = EmailService()
-    
+
     try:
         # 获取配置
         config = log.email_config or (log.task.email_config if log.task else None)
         if not config:
-            raise ValueError("No email configuration found")
-        
+            raise ValueError("未找到电子邮件配置")
+
         # 发送邮件
         result = service.send_email(
             config=config,
@@ -754,24 +789,24 @@ def retry_email_log(log_id):
             cc_recipients=log.cc_recipients,
             bcc_recipients=log.bcc_recipients
         )
-        
+
         # 更新状态
         if result['success']:
             log.status = EmailStatusEnum.SUCCESS
             log.sent_at = datetime.now()
-            message = 'Email resent successfully'
+            message = '电子邮件重新发送成功'
         else:
             log.status = EmailStatusEnum.FAILED
-            log.error_message = result.get('error', 'Unknown error')
-            message = 'Failed to resend email'
-        
+            log.error_message = result.get('error', '未知错误')
+            message = '无法重新发送电子邮件'
+
         db.session.commit()
-        
+
         return jsonify({
             'message': message,
             'status': log.status.value
         })
-        
+
     except Exception as e:
         log.status = EmailStatusEnum.FAILED
         log.error_message = str(e)
