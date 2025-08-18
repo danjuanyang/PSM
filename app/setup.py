@@ -43,7 +43,10 @@ PERMISSIONS = [
     {'name': 'view_ai_setting', 'description': 'AI配置'},
     # 用户活跃
     {'name': 'view_user_activity', 'description': '查看用户活跃度'},
+    # 配置系统数据
+    {'name': 'manage_system_settings', 'description': '管理系统配置项'},
 ]
+
 
 # --- 定义各角色的默认权限 ---
 # 将上面定义的权限名称分配给不同的角色
@@ -77,6 +80,8 @@ ROLE_DEFAULT_PERMISSIONS = {
         'view_ai_setting',
         # 用户活跃
         'view_user_activity',
+        # 系统配置
+        'manage_system_settings',
     ],
     RoleEnum.LEADER: [
         'view_users',

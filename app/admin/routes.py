@@ -7,7 +7,7 @@ from flask_login import login_required, current_user
 
 from . import admin_bp
 from .. import db
-from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, Training
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, Training, SystemConfig
 from ..decorators import permission_required, log_activity
 
 
@@ -250,8 +250,69 @@ def manage_role_permissions(role_name):
 
         return jsonify({'message': f'角色的权限"{target_role.name}"已更新。'})
 
-# 培训功能，管理员分配培训任务，每个月分配一个用户
+
+# ------------------- 系统配置 API -------------------
+
+@admin_bp.route('/system_configs', methods=['GET'])
+@permission_required('manage_system_settings')
+def get_system_configs():
+    """获取所有系统配置项"""
+    configs = SystemConfig.query.all()
+    # 密钥等敏感信息不应返回给前端
+    sensitive_keys = ['AI_API_KEY', 'MAIL_PASSWORD', 'SECRET_KEY']
+    
+    config_list = []
+    for config in configs:
+        value = '********' if config.key in sensitive_keys and config.value else config.value
+        config_list.append({
+            'id': config.id,
+            'key': config.key,
+            'value': value,
+            'description': config.description
+        })
+        
+    return jsonify(config_list)
 
 
-# 删除用户，后续实现，先做内容
-# 2025年6月24日15:51:18
+@admin_bp.route('/system_configs', methods=['POST'])
+@permission_required('manage_system_settings')
+@log_activity('更新系统配置')
+def update_system_configs():
+    """批量更新系统配置项"""
+    data = request.get_json()
+    if not isinstance(data, list):
+        return jsonify({'error': '请求正文必须是配置对象列表'}), 400
+
+    try:
+        for item in data:
+            key = item.get('key')
+            value = item.get('value')
+            
+            if not key:
+                continue
+
+            config_item = SystemConfig.query.filter_by(key=key).first()
+            if config_item:
+                # 对于敏感字段，如果前端传回的是 '********'，则不更新
+                sensitive_keys = ['AI_API_KEY', 'MAIL_PASSWORD', 'SECRET_KEY']
+                if key in sensitive_keys and value == '********':
+                    continue
+                
+                config_item.value = value
+                
+                # --- 实时更新 app.config ---
+                # 尝试进行类型转换
+                if value.lower() in ['true', 'false']:
+                    g.app.config[key] = value.lower() == 'true'
+                elif value.isdigit():
+                    g.app.config[key] = int(value)
+                else:
+                    g.app.config[key] = value
+        
+        db.session.commit()
+        return jsonify({'message': '系统配置已成功更新。'})
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': '更新配置时出错', 'details': str(e)}), 500
+

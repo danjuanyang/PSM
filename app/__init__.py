@@ -1,13 +1,52 @@
 # PSM/app/__init__.py
-from flask import Flask
+from flask import Flask, g
 from flask_login import LoginManager
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_bcrypt import Bcrypt
 from flask_cors import CORS
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, exc
 
 from config import config
+
+# ------------------- 辅助函数：从数据库加载配置 -------------------
+def load_config_from_db(app):
+    with app.app_context():
+        try:
+            from .models import SystemConfig
+            
+            # 查询所有配置项
+            configs = SystemConfig.query.all()
+            
+            for config_item in configs:
+                key = config_item.key.upper()
+                value = config_item.value
+                
+                # 尝试进行类型转换
+                # 1. 布尔值
+                if value.lower() in ['true', 'false']:
+                    app.config[key] = value.lower() == 'true'
+                # 2. 整数
+                elif value.isdigit():
+                    app.config[key] = int(value)
+                # 3. 浮点数
+                elif '.' in value and all(part.isdigit() for part in value.split('.', 1)):
+                    try:
+                        app.config[key] = float(value)
+                    except ValueError:
+                        app.config[key] = value # 转换失败则保留字符串
+                # 4. 字符串
+                else:
+                    app.config[key] = value
+            
+            app.logger.info("Successfully loaded configurations from the database.")
+
+        except exc.SQLAlchemyError as e:
+            # 在数据库尚未迁移或初始化时，这个错误是正常的，直接忽略
+            app.logger.warning(f"Could not load configurations from DB (this is normal during initial setup/migrations): {e}")
+        except Exception as e:
+            app.logger.error(f"An unexpected error occurred while loading configurations from DB: {e}")
+
 
 # ------------------- 1. 初始化扩展 -------------------
 # 将所有扩展实例在全局范围内创建
@@ -51,17 +90,24 @@ def create_app(config_name='default'):
     # a.1 初始化配置（例如创建文件夹）
     config[config_name].init_app(app)
 
+    # b. 使用app实例初始化扩展
+    # 这一步将扩展与Flask应用关联起来
+    db.init_app(app)
+    
+    # 新增：从数据库加载并覆盖配置
+    load_config_from_db(app)
+
     # 在 init_app 之前，将 render_as_batch=True 设置给 Migrate
     # 这确保 Alembic 在 SQLite 上总是使用批处理模式
     migrate.init_app(app, db, render_as_batch=True)
 
-    # b. 使用app实例初始化扩展
-    # 这一步将扩展与Flask应用关联起来
-    db.init_app(app)
-    migrate.init_app(app, db)
     bcrypt.init_app(app)
     login_manager.init_app(app)
     CORS(app, supports_credentials=True) # 允许跨域请求，并支持credentials（如cookies）
+
+    @app.before_request
+    def before_request():
+        g.app = app
 
     # c. 设置 user_loader 回调函数
     # 这个函数告诉Flask-Login如何通过ID加载用户

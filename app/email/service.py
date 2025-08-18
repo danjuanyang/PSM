@@ -11,6 +11,7 @@ import json
 import re
 from jinja2 import Template
 import logging
+from flask import current_app
 from cryptography.fernet import Fernet
 from .. import db
 from ..models import (
@@ -28,7 +29,8 @@ class EmailEncryption:
     @staticmethod
     def get_or_create_key():
         """获取或创建加密密钥"""
-        key_file = os.environ.get('EMAIL_ENCRYPTION_KEY_FILE', '.email_key')
+        # 从应用配置（已从数据库加载）中获取密钥文件路径
+        key_file = current_app.config.get('EMAIL_ENCRYPTION_KEY_FILE', '.email_key')
         
         if os.path.exists(key_file):
             with open(key_file, 'rb') as f:

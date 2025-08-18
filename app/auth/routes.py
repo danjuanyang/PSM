@@ -7,8 +7,7 @@ from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
 from ..decorators import log_activity
-from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession, Project, Alert, \
-    AnnouncementReadStatus, StageTask, StatusEnum, Announcement
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession, Project, Alert,     AnnouncementReadStatus, StageTask, StatusEnum, Announcement, SystemConfig
 from .. import db, bcrypt
 
 
@@ -19,7 +18,11 @@ def register():
     用户注册API端点。
     接收JSON格式的用户数据并创建新用户。
     """
-    if not current_app.config['ALLOW_REGISTRATION']:
+    # 确保从最新的配置中读取
+    allow_reg_config = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
+    allow_registration = allow_reg_config.value.lower() == 'true' if allow_reg_config else current_app.config.get('ALLOW_REGISTRATION', False)
+
+    if not allow_registration:
         return jsonify({"error": "注册功能当前已关闭", "code": "REGISTRATION_DISABLED"}), 403
     # 1. 检查是否是JSON请求
     if not request.is_json:
@@ -312,7 +315,7 @@ def change_email():
         return jsonify({"error": "缺少新邮箱或密码"}), 400
 
     # 验证邮箱格式
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
+    if not re.match(r"[^@]+@[^@]+\\.[^@]+", new_email):
         return jsonify({"error": "无效的邮箱格式"}), 400
 
     # 验证当前密码
@@ -338,17 +341,30 @@ def change_email():
 
 
 @auth_bp.route('/settings/registration', methods=['GET', 'POST'])
+@login_required
 def registration_settings():
+    """
+    获取或更新用户注册设置。
+    GET: 返回当前设置。
+    POST: 更新设置 (需要管理员权限)。
+    """
     if request.method == 'GET':
-        response = jsonify({"allow_registration": current_app.config['ALLOW_REGISTRATION']})
+        # 从数据库或app.config获取最新值
+        config_entry = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
+        if config_entry:
+            allow_reg = config_entry.value.lower() == 'true'
+        else:
+            allow_reg = current_app.config.get('ALLOW_REGISTRATION', False)
+        
+        response = jsonify({"allow_registration": allow_reg})
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
         response.headers['Pragma'] = 'no-cache'
         response.headers['Expires'] = '0'
         return response
 
     if request.method == 'POST':
-        # POST请求需要管理员权限
-        if not current_user.is_authenticated or current_user.role != RoleEnum.ADMIN:
+        # 权限检查
+        if current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
             return jsonify({"error": "权限不足"}), 403
 
         data = request.get_json()
@@ -357,31 +373,31 @@ def registration_settings():
         
         allow = data.get('allow_registration')
         if not isinstance(allow, bool):
-            return jsonify({"error": "无效的数据格式"}), 400
+            return jsonify({"error": "无效的数据格式，'allow_registration' 必须是布尔值"}), 400
 
-        # 这部分比较棘手，因为我们不能直接修改app.config
-        # 最好的方法是存储在数据库或一个配置文件中
-        # 这里为了简单，我们直接修改.env文件
-        # 注意：在生产环境中，这通常不是一个好主意
-        env_path = os.path.join(os.path.dirname(current_app.root_path), '.env')
-        if os.path.exists(env_path):
-            with open(env_path, 'r') as f:
-                lines = f.readlines()
+        try:
+            # 更新或创建数据库中的配置项
+            config_entry = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
+            if config_entry:
+                config_entry.value = str(allow)
+            else:
+                config_entry = SystemConfig(
+                    key='ALLOW_REGISTRATION',
+                    value=str(allow),
+                    description='是否允许新用户注册'
+                )
+                db.session.add(config_entry)
             
-            with open(env_path, 'w') as f:
-                found = False
-                for line in lines:
-                    if line.strip().startswith('ALLOW_REGISTRATION'):
-                        f.write(f'ALLOW_REGISTRATION={str(allow)}\n')
-                        found = True
-                    else:
-                        f.write(line)
-                if not found:
-                    f.write(f'\nALLOW_REGISTRATION={str(allow)}\n')
+            db.session.commit()
+
+            # 实时更新当前应用的配置
             current_app.config['ALLOW_REGISTRATION'] = allow
-            return jsonify({"message": "设置已更新"}), 200
-        else:
-            return jsonify({"error": ".env 文件未找到"}), 500
+            
+            return jsonify({"message": "注册设置已更新", "allow_registration": allow}), 200
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.error(f"更新注册设置失败: {e}")
+            return jsonify({"error": "更新设置时发生服务器错误"}), 500
 
 
 @auth_bp.route('/dashboard_stats', methods=['GET'])

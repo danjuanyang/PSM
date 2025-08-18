@@ -1,5 +1,5 @@
 # PSM/app/activity/routes.py
-from flask import request, session, jsonify, make_response
+from flask import request, session, jsonify, make_response, current_app
 from flask_login import current_user, login_required
 from datetime import datetime, date, timedelta
 import io
@@ -16,25 +16,30 @@ from ..models import db, UserSession, UserActivityLog, User, RoleEnum, Project, 
 def heartbeat():
     """
     接收前端的心跳请求，更新会话的最后活动时间，并记录活动日志。
+    此版本更健壮，不依赖于Flask session中的特定ID，而是依赖于当前登录用户。
     """
-    session_id = session.get('user_session_id')
-    if not session_id:
-        return jsonify({"status": "error", "message": "会话不存在或已过期"}), 400
+    # @login_required 确保了 current_user 是有效的。
+    # 我们查找该用户最新的、仍处于活动状态的会话记录。
+    user_session = UserSession.query.filter_by(
+        user_id=current_user.id,
+        is_active=True
+    ).order_by(UserSession.login_time.desc()).first()
 
-    user_session = UserSession.query.get(session_id)
     if not user_session:
-        return jsonify({"status": "error", "message": "会话记录未找到"}), 400
+        # 如果用户已登录但没有活动的会话记录（例如，数据库被手动清理），
+        # 返回一个错误强制前端重新登录，以同步状态。
+        return jsonify({"status": "error", "message": "活动会话记录未找到，请重新登录"}), 401
 
-    # 更新心跳
+    # 更新心跳时间
     user_session.last_activity_time = datetime.now()
 
-    # 记录活动日志
-    data = request.get_json() or {}
+    # 记录活动日志 (使用 silent=True 使JSON解析更安全)
+    data = request.get_json(silent=True) or {}
     module = data.get('module')
 
     activity_log = UserActivityLog(
         user_id=current_user.id,
-        session_id=session_id,
+        session_id=user_session.id,  # 使用我们刚刚找到的会话ID
         action_type='HEARTBEAT',
         endpoint=request.endpoint,
         module=module,
@@ -48,8 +53,7 @@ def heartbeat():
         return jsonify({"status": "ok"}), 200
     except Exception as e:
         db.session.rollback()
-        # 在实践中，这里应该使用 app.logger.error()
-        print(f"Error in heartbeat: {e}")
+        current_app.logger.error(f"心跳错误： {e}")
         return jsonify({"status": "error", "message": "数据库操作失败"}), 500
 
 
