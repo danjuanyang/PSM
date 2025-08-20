@@ -58,7 +58,6 @@ ROLE_DEFAULT_PERMISSIONS = {
         'edit_user_role',
         'manage_permissions',
         'manage_roles',
-        'view_activity_logs',
         'view_session_logs',
         'manage_projects',
         'view_reports',

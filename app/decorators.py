@@ -3,7 +3,7 @@
 from functools import wraps
 from flask import jsonify, request, g
 from flask_login import current_user
-
+from .models import UserSession
 from . import db
 from .models import UserActivityLog
 
@@ -50,63 +50,70 @@ def role_required(role):
 
 def log_activity(action_type, action_detail_template=""):
     """
-    一个记录用户活动的装饰器。
-    它可以使用URL关键字参数(如{user_id})和存储在g.log_info中的自定义数据(如{username})来格式化日志模板。
+    一个记录用户活动的装饰器（增强版）。
+    它会自动记录模块、会话ID，并格式化日志详情。
     """
 
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
-            # --- 优化点 1: 为登出操作预先捕获用户信息 ---
-            # 因为在logout之后, current_user会变为匿名用户
             user_before_logout = None
             if request.endpoint == 'auth.logout' and current_user.is_authenticated:
                 user_before_logout = current_user._get_current_object()
 
-            # --- 改造核心: 先执行视图函数，以便能从 g 对象中获取动态数据 ---
             response = f(*args, **kwargs)
 
-            # --- 优化点 2: 统一日志记录逻辑 ---
             try:
-                # 确定记录日志时要使用的用户对象
                 log_user = user_before_logout or current_user
-
-                # 如果用户未认证，则不记录日志（例如登录失败）
                 if not log_user or not log_user.is_authenticated:
                     return response
 
-                # 准备一个字典，用于格式化模板字符串
-                format_data = kwargs.copy()  # 1. 包含所有URL关键字参数
-                if hasattr(g, 'log_info') and isinstance(g.log_info, dict):
-                    format_data.update(g.log_info)  # 2. 合并来自g.log_info的动态数据
+                # 提取模块名
+                module = "default"
+                if request.endpoint:
+                    module = request.endpoint.split('.')[0]
+
+                # 获取当前用户的活动会话ID
+                user_session = UserSession.query.filter_by(
+                    user_id=log_user.id,
+                    is_active=True
+                ).order_by(UserSession.login_time.desc()).first()
+                session_id = user_session.id if user_session else None
 
                 # 格式化日志详情
+                format_data = kwargs.copy()
+                if hasattr(g, 'log_info') and isinstance(g.log_info, dict):
+                    format_data.update(g.log_info)
                 detail = action_detail_template.format(**format_data)
 
-                # 获取响应状态码
                 status_code = response.status_code if hasattr(response, 'status_code') else 200
 
-                # 创建并保存日志条目
                 log = UserActivityLog(
                     user_id=log_user.id,
+                    session_id=session_id,
                     action_type=action_type,
                     action_detail=detail,
                     status_code=status_code,
                     request_method=request.method,
                     endpoint=request.endpoint,
                     ip_address=request.remote_addr,
+                    module=module,
+                    resource_type=g.get('resource_type'),
+                    resource_id=g.get('resource_id')
                 )
                 db.session.add(log)
                 db.session.commit()
 
             except Exception as e:
-                # 即使日志记录失败，也不应影响正常的请求响应
                 print(f"错误：记录活动日志失败 - {e}")
                 db.session.rollback()
             finally:
-                # 清理 g 对象，避免数据污染下一次请求
                 if hasattr(g, 'log_info'):
                     del g.log_info
+                if hasattr(g, 'resource_type'):
+                    del g.resource_type
+                if hasattr(g, 'resource_id'):
+                    del g.resource_id
 
             return response
 

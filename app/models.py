@@ -431,6 +431,26 @@ class UserActivityLog(db.Model):
     user = db.relationship('User', backref='activity_logs')
     session = db.relationship('UserSession', backref='activity_logs')
 
+    def to_dict(self):
+        """将此对象序列化为字典。"""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'username': self.user.username if self.user else 'N/A',
+            'session_id': self.session_id,
+            'action_type': self.action_type,
+            'action_detail': self.action_detail,
+            'module': self.module,
+            'endpoint': self.endpoint,
+            'request_method': self.request_method,
+            'status_code': self.status_code,
+            'duration_seconds': self.duration_seconds,
+            'resource_type': self.resource_type,
+            'resource_id': self.resource_id,
+            'ip_address': self.ip_address,
+            'timestamp': self.timestamp.isoformat() if self.timestamp else None
+        }
+
 
 # ------------------- AI 功能模型 (AI Models) -------------------
 class SystemConfig(db.Model):
