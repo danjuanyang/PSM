@@ -7,7 +7,8 @@ from flask_login import login_user, logout_user, current_user, login_required
 
 from . import auth_bp
 from ..decorators import log_activity
-from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession, Project, Alert,     AnnouncementReadStatus, StageTask, StatusEnum, Announcement, SystemConfig
+from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, UserSession, Project, Alert, \
+    AnnouncementReadStatus, StageTask, StatusEnum, Announcement, SystemConfig, ProjectStage
 from .. import db, bcrypt
 
 
@@ -407,13 +408,19 @@ def dashboard_stats():
     为Dashboard提供关键指标的统计数据。
     """
     try:
-        # 1. 进行中的项目数
-        in_progress_projects = Project.query.filter_by(status=StatusEnum.IN_PROGRESS).count()
+        # 1. 进行中的项目数 (仅限当前用户)
+        in_progress_projects = Project.query.filter_by(
+            status=StatusEnum.IN_PROGRESS,
+            employee_id=current_user.id
+        ).count()
 
-        # 2. 待办任务数 (未开始或进行中)
-        pending_tasks = StageTask.query.filter(
+        # 2. 待办任务数 (这里假设是用户所有项目的待办任务，如果需要也可以细化)
+        #    为了准确，我们应该连接到用户负责的项目
+        pending_tasks = db.session.query(StageTask.id).join(ProjectStage).join(Project).filter(
+            Project.employee_id == current_user.id,
             StageTask.status.in_([StatusEnum.PENDING, StatusEnum.IN_PROGRESS])
         ).count()
+
 
         # 3. 未读公告数
         unread_announcements = db.session.query(Announcement.id).outerjoin(
@@ -427,8 +434,8 @@ def dashboard_stats():
         # 4. 未读提醒数
         unread_alerts = Alert.query.filter_by(user_id=current_user.id, is_read=False).count()
 
-        # 5. 最近的项目更新 (示例：最近5条)
-        recent_projects = Project.query.order_by(Project.start_date.desc()).limit(5).all()
+        # 5. 最近的项目更新 (仅限当前用户)
+        recent_projects = Project.query.filter_by(employee_id=current_user.id).order_by(Project.start_date.desc()).limit(5).all()
         recent_projects_data = [{
             'id': p.id,
             'name': p.name,
