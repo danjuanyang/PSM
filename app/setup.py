@@ -45,6 +45,8 @@ PERMISSIONS = [
     {'name': 'view_user_activity', 'description': '查看用户活跃度'},
     # 配置系统数据
     {'name': 'manage_system_settings', 'description': '管理系统配置项'},
+    # 知识库权限
+    {'name': 'manage_knowledge_base', 'description': '管理知识库公共空间和所有用户内容'},
 ]
 
 
@@ -81,6 +83,8 @@ ROLE_DEFAULT_PERMISSIONS = {
         'view_user_activity',
         # 系统配置
         'manage_system_settings',
+        # 知识库
+        'manage_knowledge_base',
     ],
     RoleEnum.LEADER: [
         'view_users',

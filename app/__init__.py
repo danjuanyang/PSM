@@ -133,6 +133,7 @@ def create_app(config_name='default'):
     from .activity import activity_bp
     from .analytics import analytics_bp
     from .email import email_bp
+    from .knowledge_base import kb_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
@@ -148,6 +149,7 @@ def create_app(config_name='default'):
     app.register_blueprint(activity_bp)
     app.register_blueprint(analytics_bp)
     app.register_blueprint(email_bp, url_prefix='/email')
+    app.register_blueprint(kb_bp, url_prefix='/kb')
     # e. 启动临时文件清理调度器
     from .files.cleanup_scheduler import cleanup_scheduler
     cleanup_scheduler.init_app(app)

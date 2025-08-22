@@ -765,6 +765,73 @@ class EmailLog(db.Model):
     email_config = db.relationship('EmailConfig', back_populates='logs')
 
 
+# ------------------- 知识库模型 (Knowledge Base Models) -------------------
+class KBItemTypeEnum(PyEnum):
+    FOLDER = 'folder'
+    MARKDOWN = 'markdown'
+    MINDMAP = 'mindmap'
+    FILE = 'file'
+
+class KBNamespaceEnum(PyEnum):
+    PUBLIC = 'public'
+    PERSONAL = 'personal'
+
+class KnowledgeBaseItem(db.Model):
+    __tablename__ = 'kb_items'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(255), nullable=False, comment="文件/文件夹名称")
+    item_type = db.Column(db.Enum(KBItemTypeEnum), nullable=False, comment="条目类型")
+    namespace = db.Column(db.Enum(KBNamespaceEnum), nullable=False, default=KBNamespaceEnum.PERSONAL, comment="命名空间")
+    
+    parent_id = db.Column(db.Integer, db.ForeignKey('kb_items.id'), nullable=True, comment="父文件夹ID")
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, comment="所有者ID")
+    
+    created_at = db.Column(db.DateTime, default=datetime.now)
+    updated_at = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+
+    # 关系
+    owner = db.relationship('User', backref=db.backref('kb_items', cascade='all, delete-orphan'))
+    parent = db.relationship('KnowledgeBaseItem', remote_side=[id], backref=db.backref('children', lazy='dynamic', cascade='all, delete-orphan'))
+    
+    # For content linking
+    markdown_document = db.relationship('MarkdownDocument', back_populates='kb_item', uselist=False, cascade='all, delete-orphan')
+    mindmap = db.relationship('MindMap', back_populates='kb_item', uselist=False, cascade='all, delete-orphan')
+    project_file_id = db.Column(db.Integer, db.ForeignKey('project_files.id'), nullable=True)
+    project_file = db.relationship('ProjectFile', backref='kb_item')
+    
+    __table_args__ = (
+        db.Index('idx_kb_parent_owner', 'parent_id', 'owner_id'),
+    )
+
+class MarkdownDocument(db.Model):
+    __tablename__ = 'kb_markdown_documents'
+    id = db.Column(db.Integer, primary_key=True)
+    kb_item_id = db.Column(db.Integer, db.ForeignKey('kb_items.id', ondelete='CASCADE'), nullable=False, unique=True)
+    content = db.Column(db.Text, default='')
+    
+    kb_item = db.relationship('KnowledgeBaseItem', back_populates='markdown_document')
+
+class MindMap(db.Model):
+    __tablename__ = 'kb_mindmaps'
+    id = db.Column(db.Integer, primary_key=True)
+    kb_item_id = db.Column(db.Integer, db.ForeignKey('kb_items.id', ondelete='CASCADE'), nullable=False, unique=True)
+    data = db.Column(db.JSON, nullable=True, comment="思维导图的JSON数据")
+
+    kb_item = db.relationship('KnowledgeBaseItem', back_populates='mindmap')
+
+# Link table for mind map nodes to KB items
+class MindMapNodeLink(db.Model):
+    __tablename__ = 'kb_mindmap_node_links'
+    id = db.Column(db.Integer, primary_key=True)
+    mindmap_id = db.Column(db.Integer, db.ForeignKey('kb_mindmaps.id', ondelete='CASCADE'), nullable=False)
+    node_id = db.Column(db.String(100), nullable=False, comment="思维导图中的节点ID")
+    linked_kb_item_id = db.Column(db.Integer, db.ForeignKey('kb_items.id', ondelete='CASCADE'), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint('mindmap_id', 'node_id', name='_mindmap_node_uc'),
+        db.Index('idx_mindmap_node_link', 'mindmap_id', 'node_id'),
+    )
+
 # 添加索引
 Index('idx_email_logs_task_id', EmailLog.task_id)
 Index('idx_email_logs_status', EmailLog.status)
