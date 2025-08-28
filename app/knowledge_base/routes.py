@@ -7,8 +7,17 @@ from flask_login import current_user, login_required
 from sqlalchemy import or_, and_
 
 from . import kb_bp
-from ..models import (KnowledgeBaseItem, KBItemTypeEnum, KBNamespaceEnum, MarkdownDocument, 
-                     MindMap, MindMapNodeLink, ProjectFile, User, RoleEnum)
+from ..models import (
+    KnowledgeBaseItem,
+    KBItemTypeEnum,
+    KBNamespaceEnum,
+    MarkdownDocument,
+    MindMap,
+    MindMapNodeLink,
+    ProjectFile,
+    User,
+    RoleEnum,
+)
 from .. import db
 
 
@@ -20,7 +29,7 @@ def list_items():
     可以按 parent_id, namespace 进行过滤。
     """
     parent_id = request.args.get('parent_id', None)
-    namespace_str = request.args.get('namespace', 'personal') # 默认为个人空间
+    namespace_str = request.args.get('namespace', 'personal')  # 默认为个人空间
 
     # 如果 parent_id 是 'root' 或 'null'，则视为根目录
     if parent_id in ['root', 'null', None]:
@@ -46,7 +55,7 @@ def list_items():
         else:
             # 普通用户只能查看自己的个人空间内容
             query = query.filter_by(namespace=KBNamespaceEnum.PERSONAL, owner_id=current_user.id)
-    else: # KBNamespaceEnum.PUBLIC
+    else:  # KBNamespaceEnum.PUBLIC
         # 所有用户都可以看到公共空间内容
         query = query.filter_by(namespace=KBNamespaceEnum.PUBLIC)
 
@@ -100,12 +109,12 @@ def create_item():
             return jsonify({"error": "父文件夹不存在或类型错误"}), 404
         # 检查用户是否有权在父文件夹下创建
         if parent_item.owner_id != current_user.id and parent_item.namespace != KBNamespaceEnum.PUBLIC:
-             return jsonify({"error": "权限不足，无法在此位置创建"}), 403
+            return jsonify({"error": "权限不足，无法在此位置创建"}), 403
 
     # 用户只能在自己的个人空间创建
     if namespace == KBNamespaceEnum.PERSONAL and (parent_item and parent_item.owner_id != current_user.id):
         return jsonify({"error": "无法在其他用户的个人空间创建文件"}), 403
-    
+
     # (未来) 在此添加公共空间创建权限检查
 
     # --- 创建条目 ---
@@ -130,8 +139,9 @@ def create_item():
         elif item_type == KBItemTypeEnum.MINDMAP:
             # 创建一个包含根节点的默认思维导图
             default_mindmap_data = {
-                'nodes': [{'id': 'root', 'label': name, 'x': 0, 'y': 0}],
-                'edges': []
+                'nodes': [{'id': 'root', 'label': name, 'x': 0, 'y': 0, 'description': ''}],
+                'edges': [],
+                'nodeExtraData': {}
             }
             mindmap = MindMap(kb_item=new_item, data=default_mindmap_data)
             db.session.add(mindmap)
@@ -196,7 +206,7 @@ def update_item(item_id):
         if 'data' in data and item.item_type == KBItemTypeEnum.MINDMAP:
             mindmap_data = data['data']
             current_app.logger.info(f"更新思维导图数据，条目ID: {item_id}, 数据类型: {type(mindmap_data)}")
-            
+
             if item.mindmap:
                 item.mindmap.data = mindmap_data
             else:
@@ -252,7 +262,7 @@ def upload_file():
     """
     if 'file' not in request.files:
         return jsonify({"error": "没有文件部分"}), 400
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({"error": "没有选择文件"}), 400
@@ -302,7 +312,7 @@ def upload_file():
             upload_user_id=current_user.id
         )
         db.session.add(project_file)
-        db.session.flush() # 获取 project_file.id
+        db.session.flush()  # 获取 project_file.id
 
         # 创建知识库条目
         kb_item = KnowledgeBaseItem(
@@ -336,14 +346,10 @@ def get_item_details(item_id):
     """
     item = KnowledgeBaseItem.query.get_or_404(item_id)
 
-    # 权限检查：所有者、公共空间的条目或有管理权限的用户可查看
-    if item.namespace == KBNamespaceEnum.PERSONAL:
-        # 个人空间条目：只有所有者或有管理权限的用户可以查看
-        if item.owner_id != current_user.id and not current_user.can('manage_knowledge_base'):
-            return jsonify({"error": "权限不足"}), 403
-    # 公共空间条目所有人都可以查看，无需额外检查
+    # 权限检查
+    if item.namespace == KBNamespaceEnum.PERSONAL and item.owner_id != current_user.id and not current_user.can('manage_knowledge_base'):
+        return jsonify({"error": "权限不足"}), 403
 
-    # 基础信息
     response_data = {
         'id': item.id,
         'name': item.name,
@@ -353,64 +359,71 @@ def get_item_details(item_id):
         'owner_id': item.owner_id,
         'created_at': item.created_at.isoformat(),
         'updated_at': item.updated_at.isoformat(),
-        'content': None, # 用于md或mindmap
-        'file_info': None, # 用于文件
-        # 权限信息
-        'can_edit': (item.owner_id == current_user.id or 
-                     current_user.can('manage_knowledge_base')),
-        'can_delete': (item.owner_id == current_user.id or 
-                       current_user.can('manage_knowledge_base'))
+        'content': None,
+        'file_info': None,
+        'can_edit': (item.owner_id == current_user.id or current_user.can('manage_knowledge_base')),
+        'can_delete': (item.owner_id == current_user.id or current_user.can('manage_knowledge_base'))
     }
 
-    # 添加特定类型的内容
     if item.item_type == KBItemTypeEnum.MARKDOWN and item.markdown_document:
         response_data['content'] = item.markdown_document.content
     elif item.item_type == KBItemTypeEnum.MINDMAP and item.mindmap:
-        mindmap_data = item.mindmap.data
-        if isinstance(mindmap_data, dict) and 'nodeExtraData' in mindmap_data:
-            node_extra_data = mindmap_data.get('nodeExtraData', {})
-            # 收集所有需要查询的关联条目ID
-            all_linked_item_ids = set()
-            for node_id, extra in node_extra_data.items():
-                for f in extra.get('attachedFiles', []):
-                    all_linked_item_ids.add(f.get('id'))
-                for f in extra.get('attachedFolders', []):
-                    all_linked_item_ids.add(f.get('id'))
-            
-            # 一次性查询所有关联条目的信息
-            if all_linked_item_ids:
-                linked_items = KnowledgeBaseItem.query.filter(KnowledgeBaseItem.id.in_(all_linked_item_ids)).all()
-                linked_items_map = {item.id: item for item in linked_items}
-                
-                # "充实" nodeExtraData
-                for node_id, extra in node_extra_data.items():
-                    # 充实文件
-                    if 'attachedFiles' in extra:
-                        enriched_files = []
-                        for f in extra['attachedFiles']:
-                            linked_item = linked_items_map.get(f.get('id'))
-                            if linked_item:
-                                enriched_files.append({
-                                    'id': linked_item.id,
-                                    'name': linked_item.name,
-                                    'item_type': linked_item.item_type.value
-                                })
-                        extra['attachedFiles'] = enriched_files
-                    
-                    # 充实文件夹
-                    if 'attachedFolders' in extra:
-                        enriched_folders = []
-                        for f in extra['attachedFolders']:
-                            linked_item = linked_items_map.get(f.get('id'))
-                            if linked_item:
-                                enriched_folders.append({
-                                    'id': linked_item.id,
-                                    'name': linked_item.name,
-                                    'item_type': linked_item.item_type.value
-                                })
-                        extra['attachedFolders'] = enriched_folders
+        mindmap_data = item.mindmap.data or {}
+        
+        if not isinstance(mindmap_data, dict):
+            mindmap_data = {'nodes': [], 'edges': [], 'nodeExtraData': {}}
 
-        response_data['content'] = mindmap_data
+        node_extra_data = mindmap_data.get('nodeExtraData', {})
+        
+        all_linked_item_ids = set()
+        if isinstance(node_extra_data, dict):
+            for node_id, extra in node_extra_data.items():
+                if isinstance(extra, dict):
+                    for f in extra.get('attachedFiles', []):
+                        if isinstance(f, dict) and f.get('id'): all_linked_item_ids.add(f.get('id'))
+                    for f in extra.get('attachedFolders', []):
+                        if isinstance(f, dict) and f.get('id'): all_linked_item_ids.add(f.get('id'))
+
+        linked_items_map = {}
+        if all_linked_item_ids:
+            linked_items = KnowledgeBaseItem.query.filter(KnowledgeBaseItem.id.in_(all_linked_item_ids)).all()
+            linked_items_map = {item.id: item for item in linked_items}
+
+        enriched_nodes = []
+        for node in mindmap_data.get('nodes', []):
+            new_node = node.copy()
+            node_id_str = str(new_node.get('id'))
+            extra = node_extra_data.get(node_id_str, {}) if isinstance(node_extra_data, dict) else {}
+
+            if not isinstance(extra, dict): extra = {}
+
+            new_node['description'] = extra.get('description', '')
+
+            enriched_files = []
+            for f in extra.get('attachedFiles', []):
+                if isinstance(f, dict):
+                    linked_item = linked_items_map.get(f.get('id'))
+                    if linked_item:
+                        enriched_files.append({'id': linked_item.id, 'name': linked_item.name, 'item_type': linked_item.item_type.value})
+            new_node['attachedFiles'] = enriched_files
+
+            enriched_folders = []
+            for f in extra.get('attachedFolders', []):
+                if isinstance(f, dict):
+                    linked_item = linked_items_map.get(f.get('id'))
+                    if linked_item:
+                        enriched_folders.append({'id': linked_item.id, 'name': linked_item.name, 'item_type': linked_item.item_type.value})
+            new_node['attachedFolders'] = enriched_folders
+            
+            enriched_nodes.append(new_node)
+
+        # 返回一个扁平化的、充实的数据结构，前端不再需要处理 nodeExtraData
+        response_data['content'] = {
+            'nodes': enriched_nodes,
+            'edges': mindmap_data.get('edges', []),
+            'cells': mindmap_data.get('cells', []) # 保留，以防旧数据格式
+        }
+
     elif item.item_type == KBItemTypeEnum.FILE and item.project_file:
         response_data['file_info'] = {
             'id': item.project_file.id,
@@ -431,24 +444,17 @@ def preview_kb_file(project_file_id):
     from ..models import ProjectFile
     from ..utils.preview import generate_file_preview
 
-    # 1. 查找文件
     project_file = ProjectFile.query.get_or_404(project_file_id)
 
-    # 2. 权限检查
-    #    文件必须关联到一个KB Item，并且用户有权访问该Item
     if not project_file.kb_item:
         return jsonify({"error": "此文件未关联到知识库"}), 404
     
-    kb_item = project_file.kb_item[0] # backref is a list
+    kb_item = project_file.kb_item[0]
     
-    # 检查权限：所有者、公共空间文件或有管理权限的用户都可以访问
     if kb_item.namespace == KBNamespaceEnum.PERSONAL:
-        # 个人空间文件：只有所有者或有管理权限的用户可以访问
         if kb_item.owner_id != current_user.id and not current_user.can('manage_knowledge_base'):
             return jsonify({"error": "权限不足"}), 403
-    # 公共空间文件所有人都可以访问，无需额外检查
 
-    # 3. 生成预览
     return generate_file_preview(project_file.file_path)
 
 
@@ -469,12 +475,8 @@ def search_items():
     except ValueError:
         return jsonify({"error": "无效的 namespace"}), 400
     
-    # 基础查询
-    query = KnowledgeBaseItem.query.filter(
-        KnowledgeBaseItem.name.contains(query_text)
-    )
+    query = KnowledgeBaseItem.query.filter(KnowledgeBaseItem.name.contains(query_text))
     
-    # 权限过滤
     if namespace == KBNamespaceEnum.PERSONAL:
         if current_user.can('manage_knowledge_base'):
             query = query.filter_by(namespace=KBNamespaceEnum.PERSONAL)
@@ -485,7 +487,6 @@ def search_items():
     
     items = query.order_by(KnowledgeBaseItem.updated_at.desc()).limit(50).all()
     
-    # 序列化结果
     result = [{
         'id': item.id,
         'name': item.name,
@@ -513,13 +514,11 @@ def move_item(item_id):
     if not data:
         return jsonify({"error": "请求必须是JSON格式"}), 415
     
-    # 权限检查：只有所有者或有管理权限的用户才能移动
     if item.owner_id != current_user.id and not current_user.can('manage_knowledge_base'):
         return jsonify({"error": "权限不足"}), 403
     
     new_parent_id = data.get('parent_id')
     
-    # 验证新父文件夹
     if new_parent_id:
         new_parent = KnowledgeBaseItem.query.get(new_parent_id)
         if not new_parent or new_parent.item_type != KBItemTypeEnum.FOLDER:
@@ -529,12 +528,10 @@ def move_item(item_id):
     else:
         new_parent_id = None
     
-    # 防止循环引用（如果移动的是文件夹）
     if item.item_type == KBItemTypeEnum.FOLDER and new_parent_id:
         if _is_ancestor_or_self(item.id, new_parent_id):
             return jsonify({"error": "不能移动文件夹到其子文件夹"}), 400
     
-    # 检查目标位置是否已有同名文件
     existing = KnowledgeBaseItem.query.filter_by(
         parent_id=new_parent_id,
         name=item.name
@@ -568,7 +565,6 @@ def copy_item(item_id):
     if not data:
         return jsonify({"error": "请求必须是JSON格式"}), 415
     
-    # 权限检查：只能复制自己的、公开的条目或有管理权限的用户可以复制任何条目
     if item.namespace == KBNamespaceEnum.PERSONAL:
         if item.owner_id != current_user.id and not current_user.can('manage_knowledge_base'):
             return jsonify({"error": "权限不足"}), 403
@@ -576,7 +572,6 @@ def copy_item(item_id):
     target_parent_id = data.get('parent_id')
     new_name = data.get('name', f"{item.name}_副本")
     
-    # 验证目标父文件夹
     if target_parent_id:
         target_parent = KnowledgeBaseItem.query.get(target_parent_id)
         if not target_parent or target_parent.item_type != KBItemTypeEnum.FOLDER:
@@ -586,7 +581,6 @@ def copy_item(item_id):
     else:
         target_parent_id = None
     
-    # 检查目标位置是否已有同名文件
     existing = KnowledgeBaseItem.query.filter_by(
         parent_id=target_parent_id,
         name=new_name
@@ -596,18 +590,16 @@ def copy_item(item_id):
         return jsonify({"error": "目标位置已存在同名条目"}), 409
     
     try:
-        # 创建新条目
         new_item = KnowledgeBaseItem(
             name=new_name,
             item_type=item.item_type,
             parent_id=target_parent_id,
             owner_id=current_user.id,
-            namespace=KBNamespaceEnum.PERSONAL  # 复制的条目总是放在个人空间
+            namespace=KBNamespaceEnum.PERSONAL
         )
         db.session.add(new_item)
-        db.session.flush()  # 获取ID
+        db.session.flush()
         
-        # 复制内容
         if item.item_type == KBItemTypeEnum.MARKDOWN and item.markdown_document:
             new_md = MarkdownDocument(
                 kb_item=new_item,
@@ -654,7 +646,6 @@ def batch_upload_files():
     parent_id = request.form.get('parent_id', None)
     namespace_str = request.form.get('namespace', 'personal')
     
-    # 验证父文件夹
     parent_item = None
     if parent_id and parent_id != 'null':
         parent_item = KnowledgeBaseItem.query.get(int(parent_id))
@@ -687,16 +678,13 @@ def batch_upload_files():
         try:
             filename = secure_filename(file.filename)
             
-            # 检查同名文件
             if KnowledgeBaseItem.query.filter_by(parent_id=parent_id, name=filename).first():
                 errors.append(f"{filename}: 同目录下已存在同名条目")
                 continue
             
-            # 保存文件
             file_path = os.path.join(upload_folder, filename)
             file.save(file_path)
             
-            # 创建 ProjectFile 记录
             project_file = ProjectFile(
                 original_name=file.filename,
                 file_name=filename,
@@ -707,7 +695,6 @@ def batch_upload_files():
             db.session.add(project_file)
             db.session.flush()
             
-            # 创建知识库条目
             kb_item = KnowledgeBaseItem(
                 name=filename,
                 item_type=KBItemTypeEnum.FILE,
@@ -753,7 +740,6 @@ def get_mindmap_links(mindmap_id):
     
     mindmap = MindMap.query.get_or_404(mindmap_id)
     
-    # 权限检查
     if mindmap.kb_item.namespace == KBNamespaceEnum.PERSONAL and mindmap.kb_item.owner_id != current_user.id:
         return jsonify({"error": "权限不足"}), 403
     
@@ -783,7 +769,6 @@ def create_mindmap_link(mindmap_id):
     if not data:
         return jsonify({"error": "请求必须是JSON格式"}), 415
     
-    # 权限检查：只有所有者才能创建链接
     if mindmap.kb_item.owner_id != current_user.id:
         return jsonify({"error": "权限不足"}), 403
     
@@ -793,16 +778,13 @@ def create_mindmap_link(mindmap_id):
     if not node_id or not linked_kb_item_id:
         return jsonify({"error": "缺少必要参数: node_id, linked_kb_item_id"}), 400
     
-    # 验证被链接的条目
     linked_item = KnowledgeBaseItem.query.get(linked_kb_item_id)
     if not linked_item:
         return jsonify({"error": "被链接的条目不存在"}), 404
     
-    # 权限检查：只能链接到自己的或公开的条目
     if linked_item.namespace == KBNamespaceEnum.PERSONAL and linked_item.owner_id != current_user.id:
         return jsonify({"error": "无权链接到该条目"}), 403
     
-    # 检查是否已存在该链接
     existing_link = MindMapNodeLink.query.filter_by(
         mindmap_id=mindmap_id,
         node_id=node_id
@@ -847,7 +829,6 @@ def delete_mindmap_link(link_id):
     link = MindMapNodeLink.query.get_or_404(link_id)
     mindmap = link.mindmap if hasattr(link, 'mindmap') else db.session.query(MindMap).filter_by(id=link.mindmap_id).first()
     
-    # 权限检查：只有所有者才能删除链接
     if mindmap.kb_item.owner_id != current_user.id:
         return jsonify({"error": "权限不足"}), 403
     
@@ -877,7 +858,6 @@ def update_mindmap_link(mindmap_id, node_id):
     if not data:
         return jsonify({"error": "请求必须是JSON格式"}), 415
     
-    # 权限检查：只有所有者才能更新链接
     if mindmap.kb_item.owner_id != current_user.id:
         return jsonify({"error": "权限不足"}), 403
     
@@ -894,12 +874,10 @@ def update_mindmap_link(mindmap_id, node_id):
     if not new_linked_kb_item_id:
         return jsonify({"error": "缺少必要参数: linked_kb_item_id"}), 400
     
-    # 验证被链接的条目
     linked_item = KnowledgeBaseItem.query.get(new_linked_kb_item_id)
     if not linked_item:
         return jsonify({"error": "被链接的条目不存在"}), 404
     
-    # 权限检查：只能链接到自己的或公开的条目
     if linked_item.namespace == KBNamespaceEnum.PERSONAL and linked_item.owner_id != current_user.id:
         return jsonify({"error": "无权链接到该条目"}), 403
     
@@ -936,10 +914,8 @@ def sync_training_files():
     import os
     
     try:
-        # 确保"培训"文件夹存在
         training_folder = _ensure_system_folder('培训')
         
-        # 获取所有有材料路径的培训
         trainings = Training.query.filter(Training.material_path.isnot(None)).all()
         
         synced_count = 0
@@ -950,28 +926,25 @@ def sync_training_files():
                 try:
                     filename = os.path.basename(training.material_path)
                     
-                    # 检查是否已存在
                     existing = KnowledgeBaseItem.query.filter_by(
                         parent_id=training_folder.id,
                         name=filename
                     ).first()
                     
                     if existing:
-                        continue  # 跳过已存在的文件
+                        continue
                     
-                    # 创建 ProjectFile 记录
                     project_file = ProjectFile(
                         original_name=filename,
                         file_name=filename,
                         file_path=training.material_path,
-                        file_type='application/pdf',  # 假设大部分是PDF
+                        file_type='application/pdf',
                         upload_user_id=training.trainer_id,
                         is_public=True
                     )
                     db.session.add(project_file)
                     db.session.flush()
                     
-                    # 创建知识库条目
                     kb_item = KnowledgeBaseItem(
                         name=f"{training.title} - {filename}",
                         item_type=KBItemTypeEnum.FILE,
@@ -1011,10 +984,8 @@ def sync_public_files():
         return jsonify({"error": "权限不足"}), 403
     
     try:
-        # 确保"公开文件"文件夹存在
         public_folder = _ensure_system_folder('公开文件')
         
-        # 获取所有公开的项目文件
         public_files = ProjectFile.query.filter_by(is_public=True).all()
         
         synced_count = 0
@@ -1025,21 +996,19 @@ def sync_public_files():
                 continue
                 
             try:
-                # 检查是否已存在
                 existing = KnowledgeBaseItem.query.filter_by(
                     parent_id=public_folder.id,
                     name=file.original_name
                 ).first()
                 
                 if existing:
-                    continue  # 跳过已存在的文件
+                    continue
                 
-                # 创建知识库条目
                 kb_item = KnowledgeBaseItem(
                     name=file.original_name,
                     item_type=KBItemTypeEnum.FILE,
                     parent_id=public_folder.id,
-                    owner_id=file.upload_user_id or 1,  # 默认管理员
+                    owner_id=file.upload_user_id or 1,
                     namespace=KBNamespaceEnum.PUBLIC,
                     project_file_id=file.id
                 )
@@ -1094,7 +1063,6 @@ def get_kb_stats():
     """
     from sqlalchemy import func
     
-    # 个人空间统计
     personal_stats = db.session.query(
         KnowledgeBaseItem.item_type,
         func.count(KnowledgeBaseItem.id).label('count')
@@ -1103,7 +1071,6 @@ def get_kb_stats():
         owner_id=current_user.id
     ).group_by(KnowledgeBaseItem.item_type).all()
     
-    # 公共空间统计（如果有权限查看）
     public_stats = db.session.query(
         KnowledgeBaseItem.item_type,
         func.count(KnowledgeBaseItem.id).label('count')
@@ -1111,7 +1078,6 @@ def get_kb_stats():
         namespace=KBNamespaceEnum.PUBLIC
     ).group_by(KnowledgeBaseItem.item_type).all()
     
-    # 最近更新的条目
     recent_items = KnowledgeBaseItem.query.filter(
         or_(
             and_(
@@ -1156,10 +1122,8 @@ def init_permissions():
     try:
         from .init_permissions import init_knowledge_base_permissions, init_default_kb_structure
         
-        # 初始化权限
         init_knowledge_base_permissions()
         
-        # 初始化默认结构
         init_default_kb_structure()
         
         return jsonify({
@@ -1179,11 +1143,10 @@ def _ensure_system_folder(folder_name):
     """
     确保系统文件夹存在，如果不存在则创建。
     """
-    # 查找管理员用户（假设ID为1或SUPER角色的第一个用户）
     from ..models import RoleEnum
     admin_user = User.query.filter_by(role=RoleEnum.SUPER).first()
     if not admin_user:
-        admin_user = User.query.first()  # 如果没有SUPER用户，使用第一个用户
+        admin_user = User.query.first()
     
     folder = KnowledgeBaseItem.query.filter_by(
         name=folder_name,

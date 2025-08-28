@@ -141,59 +141,62 @@ def get_session_details(session_id):
 @login_required
 # @permission_required('view_analytics')
 def get_module_stats():
-    """计算并返回模块停留时间统计。"""
+    """
+    计算并返回模块停留时间统计。
+    使用数据库窗口函数进行计算，以获得高性能。
+    """
     user_id = request.args.get('userId', type=int)
     start_date_str = request.args.get('startDate')
     end_date_str = request.args.get('endDate')
 
-    query = UserActivityLog.query.order_by(UserActivityLog.user_id, UserActivityLog.session_id, UserActivityLog.timestamp.asc())
+    # 基础查询
+    log_query = UserActivityLog.query
 
     # 应用筛选
     if user_id:
-        query = query.filter(UserActivityLog.user_id == user_id)
+        log_query = log_query.filter(UserActivityLog.user_id == user_id)
     if start_date_str:
         start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00')).replace(hour=0, minute=0, second=0)
-        query = query.filter(UserActivityLog.timestamp >= start_date)
+        log_query = log_query.filter(UserActivityLog.timestamp >= start_date)
     if end_date_str:
         end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00')).replace(hour=23, minute=59, second=59)
-        query = query.filter(UserActivityLog.timestamp <= end_date)
+        log_query = log_query.filter(UserActivityLog.timestamp <= end_date)
 
-    all_logs = query.all()
-    
-    module_time = {}
-    
-    if not all_logs:
-        return jsonify([])
+    # 使用窗口函数LAG()创建一个子查询，获取上一条日志的时间戳
+    # 按session_id分区，保证时间计算在同一个会话内
+    lag_subquery = log_query.with_entities(
+        UserActivityLog.module,
+        UserActivityLog.timestamp,
+        func.lag(UserActivityLog.timestamp, 1).over(
+            partition_by=UserActivityLog.session_id,
+            order_by=UserActivityLog.timestamp
+        ).label('prev_timestamp')
+    ).subquery()
 
-    # 遍历日志计算时间
-    for i in range(len(all_logs) - 1):
-        current_log = all_logs[i]
-        next_log = all_logs[i+1]
+    # 在子查询的基础上计算时间差
+    # 注意：func.julianday是SQLite特有的，如果换成PostgreSQL/MySQL，需要使用对应的时间函数
+    duration_query = db.session.query(
+        lag_subquery.c.module,
+        func.sum(
+            (func.julianday(lag_subquery.c.timestamp) - func.julianday(lag_subquery.c.prev_timestamp)) * 86400.0
+        ).label('total_duration')
+    ).filter(
+        lag_subquery.c.module.isnot(None),
+        lag_subquery.c.prev_timestamp.isnot(None),
+        # 过滤掉空闲时间（大于阈值）
+        ((func.julianday(lag_subquery.c.timestamp) - func.julianday(lag_subquery.c.prev_timestamp)) * 86400.0) < IDLE_THRESHOLD.total_seconds()
+    ).group_by(
+        lag_subquery.c.module
+    ).order_by(
+        db.text('total_duration DESC')
+    )
 
-        # 确保是同一个用户的同一个会话
-        if current_log.session_id != next_log.session_id:
-            continue
-        
-        # 确保当前日志有模块信息
-        if not current_log.module:
-            continue
-
-        time_diff = next_log.timestamp - current_log.timestamp
-        
-        # 如果时间差小于空闲阈值，则计入停留时间
-        if time_diff < IDLE_THRESHOLD:
-            module_name = current_log.module
-            if module_name not in module_time:
-                module_time[module_name] = 0
-            module_time[module_name] += time_diff.total_seconds()
+    results = duration_query.all()
 
     # 格式化为前端期望的数组格式
     formatted_stats = [
         {"module": name, "duration_seconds": int(time)}
-        for name, time in module_time.items()
+        for name, time in results
     ]
-    
-    # 按时间降序排序
-    formatted_stats.sort(key=lambda x: x['duration_seconds'], reverse=True)
 
     return jsonify(formatted_stats)
