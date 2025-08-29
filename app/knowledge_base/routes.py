@@ -1187,6 +1187,6 @@ def _is_ancestor_or_self(folder_id, target_id):
     target = KnowledgeBaseItem.query.get(target_id)
     while target and target.parent_id:
         if target.parent_id == folder_id:
-            return True
+            return True 
         target = target.parent
     return False
