@@ -17,7 +17,7 @@ from . import files_bp
 from .. import db
 from ..models import (
     ProjectFile, StageTask, StatusEnum, RoleEnum, Subproject, User, FileContent, Training,
-    ProjectStage, Project, FileMergeTask, FileMergeTaskStatusEnum
+    ProjectStage, Project, FileMergeTask, FileMergeTaskStatusEnum, KnowledgeBaseItem
 )
 from ..decorators import permission_required, log_activity
 from .merge_tasks import generate_preview_task, generate_final_pdf_task, cleanup_temp_files
@@ -288,11 +288,23 @@ def delete_file(file_id):
             is_manager = True
     if not (is_uploader or is_manager):
         return jsonify({"error": "权限不足"}), 403
+
     try:
-        os.remove(file_record.file_path)
+        # 在删除 ProjectFile 之前，先处理关联的 KnowledgeBaseItem
+        # 使用 with_for_update 来锁定记录，防止竞争条件
+        kb_items_to_delete = db.session.query(KnowledgeBaseItem).filter_by(project_file_id=file_id).with_for_update().all()
+        for item in kb_items_to_delete:
+            # 这里可以添加额外的日志记录，说明是由于文件删除导致的知识库条目删除
+            current_app.logger.info(f"因关联文件删除，正在删除知识库条目 ID: {item.id}, 名称: {item.name}")
+            db.session.delete(item)
+
+        # 现在可以安全地删除文件和记录
+        if os.path.exists(file_record.file_path):
+            os.remove(file_record.file_path)
+        
         db.session.delete(file_record)
         db.session.commit()
-        return jsonify({"message": f"文件 '{file_record.original_name}' 已成功删除"}), 200
+        return jsonify({"message": f"文件 '{file_record.original_name}' 及所有关联项已成功删除"}), 200
     except FileNotFoundError:
         db.session.delete(file_record)
         db.session.commit()
