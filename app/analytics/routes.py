@@ -13,7 +13,7 @@ IDLE_THRESHOLD = timedelta(minutes=15)
 
 @analytics_bp.route('/overview', methods=['GET'])
 @login_required
-# @permission_required('view_analytics') # 假设需要这个权限
+# @permission_required('view_analytics') # 需要这个权限
 def get_overview_stats():
     """提供实时概览统计数据。"""
     

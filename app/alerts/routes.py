@@ -198,7 +198,7 @@ def test_alert_generation():
     """
     一个仅用于测试的端点，手动为当前用户触发通知生成。
     """
-    if not current_user.role == 'SUPER': # 假设 SUPER 是超级管理员
+    if not current_user.role == 'SUPER': # SUPER 是超级管理员
         return jsonify({"error": "仅超级管理员可访问"}), 403
 
     generate_system_alerts_for_user(current_user)

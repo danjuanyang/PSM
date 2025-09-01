@@ -112,7 +112,7 @@ def login():
     if not user.check_password(password):
         return jsonify({"error": "登录错误：密码错误", "code": "INVALID_PASSWORD"}), 401
     # 3. (可选) 检查用户是否被禁用
-    # 假设您的 User 模型有一个 is_active 字段
+    # 模型有一个 is_active 字段
     if hasattr(user, 'is_active') and not user.is_active:
         return jsonify({"error": "该账户已被禁用，请联系管理员", "code": "USER_DISABLED"}), 403
 
@@ -341,64 +341,66 @@ def change_email():
     }), 200
 
 
-@auth_bp.route('/settings/registration', methods=['GET', 'POST'])
+@auth_bp.route('/public/registration-status', methods=['GET'])
+def public_registration_status():
+    """
+    公开的API端点，用于检查是否允许用户注册。
+    此端点无需认证。
+    """
+    config_entry = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
+    if config_entry:
+        allow_reg = config_entry.value.lower() == 'true'
+    else:
+        allow_reg = current_app.config.get('ALLOW_REGISTRATION', False)
+    
+    response = jsonify({"allow_registration": allow_reg})
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+
+@auth_bp.route('/settings/registration', methods=['POST'])
 @login_required
-def registration_settings():
+def update_registration_settings():
     """
-    获取或更新用户注册设置。
-    GET: 返回当前设置。
-    POST: 更新设置 (需要管理员权限)。
+    更新用户注册设置 (需要管理员权限)。
     """
-    if request.method == 'GET':
-        # 从数据库或app.config获取最新值
+    # 权限检查
+    if current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
+        return jsonify({"error": "权限不足"}), 403
+
+    data = request.get_json()
+    if data is None:
+        return jsonify({"error": "请求必须是JSON格式"}), 415
+    
+    allow = data.get('allow_registration')
+    if not isinstance(allow, bool):
+        return jsonify({"error": "无效的数据格式，'allow_registration' 必须是布尔值"}), 400
+
+    try:
+        # 更新或创建数据库中的配置项
         config_entry = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
         if config_entry:
-            allow_reg = config_entry.value.lower() == 'true'
+            config_entry.value = str(allow)
         else:
-            allow_reg = current_app.config.get('ALLOW_REGISTRATION', False)
+            config_entry = SystemConfig(
+                key='ALLOW_REGISTRATION',
+                value=str(allow),
+                description='是否允许新用户注册'
+            )
+            db.session.add(config_entry)
         
-        response = jsonify({"allow_registration": allow_reg})
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        return response
+        db.session.commit()
 
-    if request.method == 'POST':
-        # 权限检查
-        if current_user.role not in [RoleEnum.ADMIN, RoleEnum.SUPER]:
-            return jsonify({"error": "权限不足"}), 403
-
-        data = request.get_json()
-        if data is None:
-            return jsonify({"error": "请求必须是JSON格式"}), 415
+        # 实时更新当前应用的配置
+        current_app.config['ALLOW_REGISTRATION'] = allow
         
-        allow = data.get('allow_registration')
-        if not isinstance(allow, bool):
-            return jsonify({"error": "无效的数据格式，'allow_registration' 必须是布尔值"}), 400
-
-        try:
-            # 更新或创建数据库中的配置项
-            config_entry = SystemConfig.query.filter_by(key='ALLOW_REGISTRATION').first()
-            if config_entry:
-                config_entry.value = str(allow)
-            else:
-                config_entry = SystemConfig(
-                    key='ALLOW_REGISTRATION',
-                    value=str(allow),
-                    description='是否允许新用户注册'
-                )
-                db.session.add(config_entry)
-            
-            db.session.commit()
-
-            # 实时更新当前应用的配置
-            current_app.config['ALLOW_REGISTRATION'] = allow
-            
-            return jsonify({"message": "注册设置已更新", "allow_registration": allow}), 200
-        except Exception as e:
-            db.session.rollback()
-            current_app.logger.error(f"更新注册设置失败: {e}")
-            return jsonify({"error": "更新设置时发生服务器错误"}), 500
+        return jsonify({"message": "注册设置已更新", "allow_registration": allow}), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"更新注册设置失败: {e}")
+        return jsonify({"error": "更新设置时发生服务器错误"}), 500
 
 
 @auth_bp.route('/dashboard_stats', methods=['GET'])
@@ -414,7 +416,7 @@ def dashboard_stats():
             employee_id=current_user.id
         ).count()
 
-        # 2. 待办任务数 (这里假设是用户所有项目的待办任务，如果需要也可以细化)
+        # 2. 待办任务数
         #    为了准确，我们应该连接到用户负责的项目
         pending_tasks = db.session.query(StageTask.id).join(ProjectStage).join(Project).filter(
             Project.employee_id == current_user.id,

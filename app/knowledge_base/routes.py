@@ -404,7 +404,15 @@ def get_item_details(item_id):
                 if isinstance(f, dict):
                     linked_item = linked_items_map.get(f.get('id'))
                     if linked_item:
-                        enriched_files.append({'id': linked_item.id, 'name': linked_item.name, 'item_type': linked_item.item_type.value})
+                        file_info = {
+                            'id': linked_item.id, 
+                            'name': linked_item.name, 
+                            'item_type': linked_item.item_type.value,
+                            'namespace': linked_item.namespace.value
+                        }
+                        if linked_item.project_file_id:
+                            file_info['project_file_id'] = linked_item.project_file_id
+                        enriched_files.append(file_info)
             new_node['attachedFiles'] = enriched_files
 
             enriched_folders = []
@@ -412,7 +420,12 @@ def get_item_details(item_id):
                 if isinstance(f, dict):
                     linked_item = linked_items_map.get(f.get('id'))
                     if linked_item:
-                        enriched_folders.append({'id': linked_item.id, 'name': linked_item.name, 'item_type': linked_item.item_type.value})
+                        enriched_folders.append({
+                            'id': linked_item.id, 
+                            'name': linked_item.name, 
+                            'item_type': linked_item.item_type.value,
+                            'namespace': linked_item.namespace.value
+                        })
             new_node['attachedFolders'] = enriched_folders
             
             enriched_nodes.append(new_node)

@@ -126,7 +126,7 @@ def get_activity_logs():
 
 
 @admin_bp.route('/sessions', methods=['GET'])
-@permission_required('view_session_logs')  # 假设 'view_session_logs' 是查看会话日志的权限
+@permission_required('view_session_logs')  # 'view_session_logs' 是查看会话日志的权限
 def get_session_logs():
     """获取用户会话日志列表，支持过滤和分页"""
     query = UserSession.query
