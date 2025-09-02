@@ -1,6 +1,6 @@
 # app/project/routes.py
 
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, current_app
 from flask_login import current_user, login_required
 from sqlalchemy import func
 
@@ -668,3 +668,178 @@ def delete_task(task_id):
     db.session.delete(task)
     db.session.commit()
     return jsonify({"message": "任务已删除"}), 200
+
+
+@project_bp.route('/<int:project_id>/generate_mindmap', methods=['POST'])
+@login_required
+@log_activity('生成项目思维导图', action_detail_template='为项目 {project_name} 生成思维导图')
+def generate_project_mindmap(project_id):
+    from ..models import KnowledgeBaseItem, KBItemTypeEnum, KBNamespaceEnum, MindMap
+
+    project = Project.query.get_or_404(project_id)
+    g.log_info = {'project_name': project.name}
+
+    # 权限检查：只有能访问该项目的人才能为其创建导图
+    # (这里的权限逻辑可能需要根据 get_project 的逻辑进行调整，暂时简化)
+    if not can_manage_project_item(project):
+         return jsonify({"error": "权限不足，无法访问此项目"}), 403
+
+    nodes = []
+    edges = []
+    node_extra_data = {}
+
+    # 1. 项目作为根节点
+    project_node_id = f"proj_{project.id}"
+    nodes.append({'id': project_node_id, 'label': project.name})
+    node_extra_data[project_node_id] = {
+        'description': project.description or '',
+        'attachedFiles': [],
+        'attachedFolders': []
+    }
+
+    # 2. 关联项目文件到根节点
+    # 注意：这里需要一个方法来把 ProjectFile 转换为 KBItem，如果它们还没有在知识库中的话
+    # 这是一个简化逻辑，假设我们只关联已存在的KBItem
+    # 一个更完整的实现需要检查并可能创建KBItem
+
+    # 3. 遍历子项目、阶段和任务
+    for subproject in project.subprojects:
+        subproject_node_id = f"sub_{subproject.id}"
+        nodes.append({'id': subproject_node_id, 'label': subproject.name})
+        edges.append({'source': project_node_id, 'target': subproject_node_id})
+        node_extra_data[subproject_node_id] = {'description': subproject.description or ''}
+
+        for stage in subproject.stages:
+            stage_node_id = f"stage_{stage.id}"
+            nodes.append({'id': stage_node_id, 'label': stage.name})
+            edges.append({'source': subproject_node_id, 'target': stage_node_id})
+            node_extra_data[stage_node_id] = {'description': stage.description or ''}
+
+            for task in stage.tasks:
+                task_node_id = f"task_{task.id}"
+                nodes.append({'id': task_node_id, 'label': task.name})
+                edges.append({'source': stage_node_id, 'target': task_node_id})
+                node_extra_data[task_node_id] = {'description': task.description or ''}
+
+    mindmap_data = {
+        'nodes': nodes,
+        'edges': edges,
+        'nodeExtraData': node_extra_data
+    }
+
+    try:
+        # 在用户的个人空间创建思维导图
+        kb_item_name = f"{project.name} - 项目导图"
+        # 检查是否已存在同名导图
+        existing_item = KnowledgeBaseItem.query.filter_by(
+            owner_id=current_user.id,
+            namespace=KBNamespaceEnum.PERSONAL,
+            name=kb_item_name,
+            parent_id=None # 根目录
+        ).first()
+
+        if existing_item:
+            return jsonify({"error": f'名为 "{kb_item_name}" 的思维导图已存在于您的个人空间'}), 409
+
+        new_kb_item = KnowledgeBaseItem(
+            name=kb_item_name,
+            item_type=KBItemTypeEnum.MINDMAP,
+            namespace=KBNamespaceEnum.PERSONAL,
+            owner_id=current_user.id
+        )
+        db.session.add(new_kb_item)
+
+        new_mindmap = MindMap(kb_item=new_kb_item, data=mindmap_data)
+        db.session.add(new_mindmap)
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "项目思维导图生成成功！",
+            "mindmap_id": new_kb_item.id
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"生成项目思维导图失败: {e}")
+        return jsonify({"error": "生成思维导图时发生服务器错误"}), 500
+
+
+@project_bp.route('/subprojects/<int:subproject_id>/generate_mindmap', methods=['POST'])
+@login_required
+@log_activity('生成子项目思维导图', action_detail_template='为子项目 {subproject_name} 生成思维导图')
+def generate_subproject_mindmap(subproject_id):
+    from ..models import KnowledgeBaseItem, KBItemTypeEnum, KBNamespaceEnum, MindMap
+
+    subproject = Subproject.query.get_or_404(subproject_id)
+    g.log_info = {'subproject_name': subproject.name}
+
+    # 权限检查：项目负责人或子项目成员可以生成
+    is_project_leader = current_user.id == subproject.project.employee_id
+    is_member = current_user in subproject.members
+
+    if not (is_project_leader or is_member or current_user.role in [RoleEnum.ADMIN, RoleEnum.SUPER]):
+        return jsonify({"error": "权限不足，无法访问此子项目"}), 403
+
+    nodes = []
+    edges = []
+    node_extra_data = {}
+
+    # 1. 子项目作为根节点
+    subproject_node_id = f"sub_{subproject.id}"
+    nodes.append({'id': subproject_node_id, 'label': subproject.name})
+    node_extra_data[subproject_node_id] = {'description': subproject.description or ''}
+
+    # 2. 遍历阶段和任务
+    for stage in subproject.stages:
+        stage_node_id = f"stage_{stage.id}"
+        nodes.append({'id': stage_node_id, 'label': stage.name})
+        edges.append({'source': subproject_node_id, 'target': stage_node_id})
+        node_extra_data[stage_node_id] = {'description': stage.description or ''}
+
+        for task in stage.tasks:
+            task_node_id = f"task_{task.id}"
+            nodes.append({'id': task_node_id, 'label': task.name})
+            edges.append({'source': stage_node_id, 'target': task_node_id})
+            node_extra_data[task_node_id] = {'description': task.description or ''}
+
+    mindmap_data = {
+        'nodes': nodes,
+        'edges': edges,
+        'nodeExtraData': node_extra_data
+    }
+
+    try:
+        kb_item_name = f"{subproject.name} - 子项目导图"
+        existing_item = KnowledgeBaseItem.query.filter_by(
+            owner_id=current_user.id,
+            namespace=KBNamespaceEnum.PERSONAL,
+            name=kb_item_name,
+            parent_id=None
+        ).first()
+
+        if existing_item:
+            return jsonify({"error": f'名为 "{kb_item_name}" 的思维导图已存在于您的个人空间'}), 409
+
+        new_kb_item = KnowledgeBaseItem(
+            name=kb_item_name,
+            item_type=KBItemTypeEnum.MINDMAP,
+            namespace=KBNamespaceEnum.PERSONAL,
+            owner_id=current_user.id
+        )
+        db.session.add(new_kb_item)
+
+        new_mindmap = MindMap(kb_item=new_kb_item, data=mindmap_data)
+        db.session.add(new_mindmap)
+
+        db.session.commit()
+
+        return jsonify({
+            "message": "子项目思维导图生成成功！",
+            "mindmap_id": new_kb_item.id
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"生成子项目思维导图失败: {e}")
+        return jsonify({"error": "生成思维导图时发生服务器错误"}), 500

@@ -12,7 +12,7 @@ from ..models import (
     EmailTemplateTypeEnum, EmailTaskFrequencyEnum, EmailStatusEnum,
     RoleEnum
 )
-from ..decorators import role_required
+from ..decorators import role_required, permission_required
 from .service import EmailService, EmailEncryption
 from .scheduler import email_scheduler
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @email_bp.route('/configs', methods=['GET'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def get_email_configs():
     """获取邮件配置列表"""
     configs = EmailConfig.query.all()
@@ -50,7 +50,7 @@ def get_email_configs():
 
 @email_bp.route('/configs', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def create_email_config():
     """创建邮件配置"""
     data = request.get_json()
@@ -94,7 +94,7 @@ def create_email_config():
 
 @email_bp.route('/configs/<int:config_id>', methods=['PUT'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def update_email_config(config_id):
     """更新邮件配置"""
     config = EmailConfig.query.get_or_404(config_id)
@@ -134,7 +134,7 @@ def update_email_config(config_id):
 
 @email_bp.route('/configs/<int:config_id>', methods=['DELETE'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def delete_email_config(config_id):
     """删除邮件配置"""
     config = EmailConfig.query.get_or_404(config_id)
@@ -152,7 +152,7 @@ def delete_email_config(config_id):
 
 @email_bp.route('/configs/<int:config_id>/test', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def test_email_config(config_id):
     """测试邮件配置"""
     try:
@@ -216,7 +216,7 @@ def get_email_templates():
 
 @email_bp.route('/templates', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def create_email_template():
     """创建邮件模板"""
     data = request.get_json()
@@ -256,7 +256,7 @@ def create_email_template():
 
 @email_bp.route('/templates/<int:template_id>', methods=['PUT'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def update_email_template(template_id):
     """更新邮件模板"""
     template = EmailTemplate.query.get_or_404(template_id)
@@ -291,7 +291,7 @@ def update_email_template(template_id):
 
 @email_bp.route('/templates/<int:template_id>', methods=['DELETE'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def delete_email_template(template_id):
     """删除邮件模板"""
     template = EmailTemplate.query.get_or_404(template_id)
@@ -389,7 +389,7 @@ def get_recipient_groups():
 
 @email_bp.route('/recipient-groups', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def create_recipient_group():
     """创建收件人组"""
     data = request.get_json()
@@ -421,7 +421,7 @@ def create_recipient_group():
 
 @email_bp.route('/recipient-groups/<int:group_id>', methods=['PUT'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def update_recipient_group(group_id):
     """更新收件人组"""
     group = EmailRecipientGroup.query.get_or_404(group_id)
@@ -454,7 +454,7 @@ def update_recipient_group(group_id):
 
 @email_bp.route('/recipient-groups/<int:group_id>', methods=['DELETE'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def delete_recipient_group(group_id):
     """删除收件人组"""
     group = EmailRecipientGroup.query.get_or_404(group_id)
@@ -507,7 +507,7 @@ def get_email_tasks():
 
 @email_bp.route('/tasks', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def create_email_task():
     """创建邮件任务"""
     data = request.get_json()
@@ -565,7 +565,7 @@ def create_email_task():
 
 @email_bp.route('/tasks/<int:task_id>', methods=['PUT'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def update_email_task(task_id):
     """更新邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
@@ -623,7 +623,7 @@ def update_email_task(task_id):
 
 @email_bp.route('/tasks/<int:task_id>', methods=['DELETE'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def delete_email_task(task_id):
     """删除邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
@@ -639,7 +639,7 @@ def delete_email_task(task_id):
 
 @email_bp.route('/tasks/<int:task_id>/run', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def run_email_task(task_id):
     """立即执行邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
@@ -651,7 +651,7 @@ def run_email_task(task_id):
 
 @email_bp.route('/tasks/<int:task_id>/toggle', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def toggle_email_task(task_id):
     """启用/禁用邮件任务"""
     task = EmailTask.query.get_or_404(task_id)
@@ -757,7 +757,7 @@ def get_email_log_detail(log_id):
 
 @email_bp.route('/logs/<int:log_id>/retry', methods=['POST'])
 @login_required
-@role_required(RoleEnum.ADMIN)
+@permission_required('manage_email_configs')
 def retry_email_log(log_id):
     """重试发送失败的邮件"""
     log = EmailLog.query.get_or_404(log_id)
