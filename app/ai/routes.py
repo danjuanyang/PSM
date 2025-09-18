@@ -287,6 +287,9 @@ def chat(conv_id):
 @login_required
 def chat_stream(conv_id):
     """在指定对话中与AI进行流式聊天。"""
+    from flask import current_app
+    import threading
+
     conversation = AIConversation.query.filter_by(id=conv_id, user_id=current_user.id).first_or_404()
 
     data = request.get_json()
@@ -298,88 +301,116 @@ def chat_stream(conv_id):
     if not api_key:
         return jsonify({"error": "未配置 API 密钥。请联系管理员或自行设置。"}), 400
 
+    # 在函数作用域内完成所有数据库操作，避免在生成器中操作
+    try:
+        # 1. 构建对话历史
+        messages_history = AIMessage.query.filter_by(conversation_id=conversation.id).order_by(AIMessage.created_at).all()
+        history_for_api = [{"role": msg.role, "content": msg.content} for msg in messages_history]
+        history_for_api.append({"role": "user", "content": user_message_content})
+
+        # 2. 保存用户消息
+        user_message = AIMessage(
+            conversation_id=conversation.id,
+            content=user_message_content,
+            role='user'
+        )
+        db.session.add(user_message)
+        db.session.commit()
+
+        # 3. 获取当前应用实例和会话ID，避免传递对象实例
+        app = current_app._get_current_object()
+        conversation_id = conversation.id  # 只传递ID，不传递对象
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"准备聊天数据失败: {str(e)}"}), 500
+
+    def save_ai_message_background(app_instance, conv_id, content, tokens):
+        """在独立的应用上下文中保存AI消息"""
+        with app_instance.app_context():
+            try:
+                ai_message = AIMessage(
+                    conversation_id=conv_id,
+                    content=content,
+                    role='assistant',
+                    model_version="deepseek-chat",
+                    total_tokens=tokens
+                )
+                db.session.add(ai_message)
+
+                # 更新对话时间
+                conv = AIConversation.query.get(conv_id)
+                if conv:
+                    conv.updated_at = db.func.now()
+
+                db.session.commit()
+                return ai_message.id
+            except Exception as e:
+                db.session.rollback()
+                print(f"后台保存AI消息失败: {e}")
+                return None
+
     def generate():
+        """纯粹的生成器函数，不包含任何数据库操作"""
+        full_response = ""
+        total_tokens = 0
+
         try:
-            # 构建对话历史
-            messages_history = AIMessage.query.filter_by(conversation_id=conversation.id).order_by(AIMessage.created_at).all()
-            history_for_api = [{"role": msg.role, "content": msg.content} for msg in messages_history]
-            history_for_api.append({"role": "user", "content": user_message_content})
-
-            # 先保存用户消息
-            user_message = AIMessage(
-                conversation_id=conversation.id,
-                content=user_message_content,
-                role='user'
-            )
-            db.session.add(user_message)
-            db.session.commit()
-
             # 发送开始信号
             yield f"data: {json.dumps({'type': 'start'})}\n\n"
 
-            # 初始化OpenAI客户端并创建流式响应
+            # 创建OpenAI客户端和流
             client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-
             stream = client.chat.completions.create(
                 model="deepseek-chat",
                 messages=history_for_api,
                 stream=True
             )
 
-            full_response = ""
-            total_tokens = 0
-
-            # 逐块处理流式响应
+            # 处理流式响应
             for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    full_response += content
+                if chunk.choices and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, 'content') and delta.content is not None:
+                        content = delta.content
+                        full_response += content
 
-                    # 发送内容块
-                    data = {
-                        'type': 'content',
-                        'content': content
-                    }
-                    yield f"data: {json.dumps(data)}\n\n"
+                        # 发送内容块
+                        content_data = {
+                            'type': 'content',
+                            'content': content
+                        }
+                        yield f"data: {json.dumps(content_data)}\n\n"
 
-                # 检查是否有使用信息
-                if hasattr(chunk, 'usage') and chunk.usage:
+                # 检查token使用情况
+                if hasattr(chunk, 'usage') and chunk.usage is not None:
                     total_tokens = chunk.usage.total_tokens
 
-            # 保存AI回复消息
-            ai_message = AIMessage(
-                conversation_id=conversation.id,
-                content=full_response,
-                role='assistant',
-                model_version="deepseek-chat",
-                total_tokens=total_tokens
+            # 在后台线程中保存AI响应
+            save_thread = threading.Thread(
+                target=save_ai_message_background,
+                args=(app, conversation_id, full_response, total_tokens)  # 使用conversation_id而不是conversation对象
             )
-            db.session.add(ai_message)
-
-            # 更新对话时间
-            conversation.updated_at = db.func.now()
-            db.session.commit()
+            save_thread.daemon = True  # 设置为守护线程
+            save_thread.start()
 
             # 发送完成信号
-            completion_data = {
+            done_data = {
                 'type': 'done',
                 'total_tokens': total_tokens,
-                'message_id': ai_message.id
+                'message_id': None  # 异步保存，无法立即返回ID
             }
-            yield f"data: {json.dumps(completion_data)}\n\n"
+            yield f"data: {json.dumps(done_data)}\n\n"
 
         except Exception as e:
             # 发送错误信号
             error_data = {
                 'type': 'error',
-                'error': f"AI聊天过程中出错: {str(e)}"
+                'error': f"流式响应出错: {str(e)}"
             }
             yield f"data: {json.dumps(error_data)}\n\n"
 
-            # 回滚数据库
-            db.session.rollback()
-
-    return Response(generate(), mimetype='text/plain', headers={
+    return Response(generate(), mimetype='text/event-stream', headers={
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
         'Access-Control-Allow-Origin': '*',
