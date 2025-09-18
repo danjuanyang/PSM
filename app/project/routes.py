@@ -11,6 +11,30 @@ from ..decorators import permission_required, log_activity
 from datetime import datetime, timezone
 
 
+def parse_iso_datetime(datetime_str):
+    """
+    统一处理ISO格式的时间字符串，兼容带Z后缀和不带Z后缀的格式
+    支持格式：
+    - "2025-09-01T06:45:32.890000" (Windows IDE)
+    - "2025-09-01T06:41:51.580Z" (Docker环境)
+    """
+    if not datetime_str:
+        return None
+
+    datetime_str = datetime_str.strip()
+    if not datetime_str:
+        return None
+
+    try:
+        # 如果有Z后缀，替换为+00:00
+        if datetime_str.endswith('Z'):
+            datetime_str = datetime_str.replace('Z', '+00:00')
+        return datetime.fromisoformat(datetime_str)
+    except ValueError as e:
+        raise ValueError(f"时间格式错误，请使用ISO格式: {e}")
+
+
+
 # --- 辅助函数 (Helper Functions) ---
 
 def _track_entity_activity(entity, entity_type_str):
@@ -26,14 +50,10 @@ def _track_entity_activity(entity, entity_type_str):
         return
 
     try:
-        # 解析带时区信息的ISO格式时间字符串
-        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        # 使用本地时区解析时间
+        start_time = datetime.now()
+        end_time = datetime.now()
         
-        # 确保它是UTC时间
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=timezone.utc)
-        
-        end_time = datetime.now(timezone.utc)
         duration = (end_time - start_time).total_seconds()
         
         # 确保时长是合理的，例如，不为负数且不超过某个阈值（比如12小时）
@@ -229,11 +249,19 @@ def create_project():
         leader = User.query.get(data.get('employee_id'))
         if not leader or leader.role != RoleEnum.LEADER:
             return jsonify({"error": "负责人必须是组长"}), 400
+    # 处理时间字段 - 统一使用parse_iso_datetime函数
+    try:
+        start_date = parse_iso_datetime(data.get('start_date'))
+        deadline = parse_iso_datetime(data.get('deadline'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     new_project = Project(
-        name=data['name'], description=data.get('description'),
+        name=data['name'],
+        description=data.get('description'),
         employee_id=data.get('employee_id'),
-        start_date=datetime.fromisoformat(data['start_date']) if data.get('start_date') else None,
-        deadline=datetime.fromisoformat(data['deadline']) if data.get('deadline') else None,
+        start_date=start_date,
+        deadline=deadline,
         status=StatusEnum[data.get('status', 'PENDING').upper()]
     )
     db.session.add(new_project)
@@ -257,8 +285,11 @@ def update_project(project_id):
             if not leader or leader.role != RoleEnum.LEADER:
                 return jsonify({"error": "负责人必须是组长"}), 400
         project.employee_id = leader_id
-    project.start_date = datetime.fromisoformat(data['start_date']) if data.get('start_date') else project.start_date
-    project.deadline = datetime.fromisoformat(data['deadline']) if data.get('deadline') else project.deadline
+    try:
+        project.start_date = parse_iso_datetime(data.get('start_date')) if data.get('start_date') else project.start_date
+        project.deadline = parse_iso_datetime(data.get('deadline')) if data.get('deadline') else project.deadline
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if data.get('status'):
         project.status = StatusEnum[data.get('status').upper()]
     
@@ -353,11 +384,17 @@ def create_subproject(project_id):
     if current_user.role != RoleEnum.LEADER or project.employee_id != current_user.id:
         return jsonify({"error": "权限不足，只有项目负责人(组长)可以创建子项目"}), 403
     data = request.get_json()
+    try:
+        start_date = parse_iso_datetime(data.get('start_date'))
+        deadline = parse_iso_datetime(data.get('deadline'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     new_subproject = Subproject(
         project_id=project_id, name=data['name'], description=data.get('description'),
         # employee_id=data.get('employee_id'),
-        start_date=datetime.fromisoformat(data['start_date']) if data.get('start_date') else None,
-        deadline=datetime.fromisoformat(data['deadline']) if data.get('deadline') else None,
+        start_date=start_date,
+        deadline=deadline,
         status=StatusEnum[data.get('status', 'PENDING').upper()]
     )
     # --- 处理多个成员 ---
@@ -449,11 +486,17 @@ def create_stage(subproject_id):
     if not (is_assigned_member or is_project_leader):
         return jsonify({"error": "权限不足, 只有被分配的组员或项目负责人可以创建阶段"}), 403
     data = request.get_json()
+    try:
+        start_date = parse_iso_datetime(data.get('start_date'))
+        end_date = parse_iso_datetime(data.get('end_date'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     new_stage = ProjectStage(
         project_id=subproject.project_id, subproject_id=subproject_id, name=data['name'],
         description=data.get('description'),
-        start_date=datetime.fromisoformat(data['start_date']) if data.get('start_date') else None,
-        end_date=datetime.fromisoformat(data['end_date']) if data.get('end_date') else None,
+        start_date=start_date,
+        end_date=end_date,
         status=StatusEnum[data.get('status', 'PENDING').upper()]
     )
     db.session.add(new_stage)
@@ -506,8 +549,11 @@ def update_stage(stage_id):
     data = request.get_json()
     stage.name = data.get('name', stage.name)
     stage.description = data.get('description', stage.description)
-    stage.start_date = datetime.fromisoformat(data['start_date']) if data.get('start_date') else stage.start_date
-    stage.end_date = datetime.fromisoformat(data['end_date']) if data.get('end_date') else stage.end_date
+    try:
+        stage.start_date = parse_iso_datetime(data.get('start_date')) if data.get('start_date') else stage.start_date
+        stage.end_date = parse_iso_datetime(data.get('end_date')) if data.get('end_date') else stage.end_date
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if data.get('status'):
         stage.status = StatusEnum[data.get('status').upper()]
     _track_entity_activity(stage, 'stage')
@@ -530,9 +576,14 @@ def create_task(stage_id):
     if not (is_assigned_member or is_project_leader):
         return jsonify({"error": "权限不足"}), 403
     data = request.get_json()
+    try:
+        due_date = parse_iso_datetime(data.get('due_date'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
     new_task = StageTask(
         stage_id=stage_id, name=data['name'], description=data.get('description'),
-        due_date=datetime.fromisoformat(data['due_date']) if data.get('due_date') else None,
+        due_date=due_date,
         status=StatusEnum[data.get('status', 'PENDING').upper()]
     )
     db.session.add(new_task)
@@ -589,7 +640,10 @@ def update_task(task_id):
     data = request.get_json()
     task.name = data.get('name', task.name)
     task.description = data.get('description', task.description)
-    task.due_date = datetime.fromisoformat(data['due_date']) if data.get('due_date') else task.due_date
+    try:
+        task.due_date = parse_iso_datetime(data.get('due_date')) if data.get('due_date') else task.due_date
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     _track_entity_activity(task, 'task')
     db.session.commit()
     return jsonify(task_to_json(task)), 200

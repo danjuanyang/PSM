@@ -21,7 +21,7 @@ class Config:
     lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME', 3600))
     # lifetime_seconds = int(os.environ.get('PERMANENT_SESSION_LIFETIME'))
     PERMANENT_SESSION_LIFETIME = timedelta(seconds=lifetime_seconds)
-    ALLOW_REGISTRATION = os.environ.get('ALLOW_REGISTRATION', 'False').lower() in ('true', '1', 't')
+    ALLOW_REGISTRATION = os.environ.get('ALLOW_REGISTRATION', 'True').lower() in ('true', '1', 't')
 
     # 数据库配置
     SQLALCHEMY_TRACK_MODIFICATIONS = False
@@ -29,12 +29,14 @@ class Config:
 
     # 文件存储配置
     UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')
+    DATA_FOLDER = os.path.join(basedir, 'data/')
     TEMP_DIR = os.path.join(basedir, '..', 'temp/')
 
     @staticmethod
     def init_app(app):
         # 确保上传和临时文件夹存在
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+        os.makedirs(app.config['DATA_FOLDER'], exist_ok=True)
         os.makedirs(app.config['TEMP_DIR'], exist_ok=True)
 
 
@@ -45,7 +47,7 @@ class DevelopmentConfig(Config):
     DEBUG = True
     # 使用 SQLite 数据库，文件将保存在项目根目录下的 data.sqlite
     SQLALCHEMY_DATABASE_URI = os.environ.get('DEV_DATABASE_URL') or \
-                              'sqlite:///' + os.path.join(basedir, 'psm-dev.db')
+                              'sqlite:///' + os.path.join(Config.DATA_FOLDER, 'psm-dev.db')
     SQLALCHEMY_ECHO = True  # 开发时建议开启，方便调试
 
 
@@ -56,7 +58,7 @@ class ProductionConfig(Config):
     DEBUG = False
     # 生产环境中，通常会从环境变量中获取数据库连接（例如 PostgreSQL, MySQL）
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-                              'sqlite:///' + os.path.join(basedir, 'psm.db')  # 默认仍使用sqlite
+                              'sqlite:///' + os.path.join(Config.DATA_FOLDER, 'psm.db')  # 默认仍使用sqlite
 
 
 class TestingConfig(Config):
@@ -73,5 +75,5 @@ config = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
     'testing': TestingConfig,
-    'default': DevelopmentConfig
+    'default': ProductionConfig
 }

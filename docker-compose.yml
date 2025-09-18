@@ -1,4 +1,4 @@
-version: '3.12'
+version: '3.8'
 
 services:
   psm-backend:
@@ -9,11 +9,11 @@ services:
     ports:
       - "3456:3456"
     # 卷挂载，用于数据持久化
-    # 将主机当前目录下的 data 文件夹挂载到容器的 /app 目录
-    # 将主机当前目录下的 uploads 文件夹挂载到容器的 /app/uploads 目录
     volumes:
-      - ./psm.db:/app/psm.db
-      - ./uploads:/app/uploads
+      # 将主机当前目录下的 data 文件夹挂载到容器的 /app/data 目录 (用于数据库)
+      - ./data:/app/data
+      # 将主机当前目录下的 uploads 文件夹挂载到容器的 /uploads 目录 (用于文件上传)
+      - ./uploads:/uploads
     # 设置容器总是自动重启
     restart: unless-stopped
     # 设置环境变量 (如果您的应用需要)

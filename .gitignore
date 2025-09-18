@@ -252,3 +252,6 @@
 /app/fonts/仿宋_GB2312.ttf
 /app/fonts/方正小标宋_GBK.ttf
 /app/fonts/楷体_GB2312.ttf
+/data/psm.db
+/data/新测试psm-dev.db
+/data/旧正式psm-old.db

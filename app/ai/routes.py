@@ -1,8 +1,9 @@
 # PSM/app/ai/routes.py
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from flask_login import login_required, current_user
 from sqlalchemy import func, desc
 from openai import OpenAI  # 导入 OpenAI
+import json
 
 from . import ai_bp
 from .. import db
@@ -237,7 +238,7 @@ def chat(conv_id):
 
     try:
         # 使用OpenAI库与DeepSeek API交互
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com/v1")
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         
         response = client.chat.completions.create(
             model="deepseek-chat",
@@ -278,5 +279,109 @@ def chat(conv_id):
 
     except Exception as e:
         db.session.rollback()
-        print(f"Error during AI chat completion: {e}")
+        print(f"AI 聊天完成过程中出错： {e}")
         return jsonify({"error": f"无法与 AI 服务通信： {str(e)}"}), 500
+
+
+@ai_bp.route('/conversations/<int:conv_id>/chat-stream', methods=['POST'])
+@login_required
+def chat_stream(conv_id):
+    """在指定对话中与AI进行流式聊天。"""
+    conversation = AIConversation.query.filter_by(id=conv_id, user_id=current_user.id).first_or_404()
+
+    data = request.get_json()
+    user_message_content = data.get('message')
+    if not user_message_content:
+        return jsonify({"error": "消息内容为必填项"}), 400
+
+    api_key = get_api_key()
+    if not api_key:
+        return jsonify({"error": "未配置 API 密钥。请联系管理员或自行设置。"}), 400
+
+    def generate():
+        try:
+            # 构建对话历史
+            messages_history = AIMessage.query.filter_by(conversation_id=conversation.id).order_by(AIMessage.created_at).all()
+            history_for_api = [{"role": msg.role, "content": msg.content} for msg in messages_history]
+            history_for_api.append({"role": "user", "content": user_message_content})
+
+            # 先保存用户消息
+            user_message = AIMessage(
+                conversation_id=conversation.id,
+                content=user_message_content,
+                role='user'
+            )
+            db.session.add(user_message)
+            db.session.commit()
+
+            # 发送开始信号
+            yield f"data: {json.dumps({'type': 'start'})}\n\n"
+
+            # 初始化OpenAI客户端并创建流式响应
+            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+
+            stream = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=history_for_api,
+                stream=True
+            )
+
+            full_response = ""
+            total_tokens = 0
+
+            # 逐块处理流式响应
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    full_response += content
+
+                    # 发送内容块
+                    data = {
+                        'type': 'content',
+                        'content': content
+                    }
+                    yield f"data: {json.dumps(data)}\n\n"
+
+                # 检查是否有使用信息
+                if hasattr(chunk, 'usage') and chunk.usage:
+                    total_tokens = chunk.usage.total_tokens
+
+            # 保存AI回复消息
+            ai_message = AIMessage(
+                conversation_id=conversation.id,
+                content=full_response,
+                role='assistant',
+                model_version="deepseek-chat",
+                total_tokens=total_tokens
+            )
+            db.session.add(ai_message)
+
+            # 更新对话时间
+            conversation.updated_at = db.func.now()
+            db.session.commit()
+
+            # 发送完成信号
+            completion_data = {
+                'type': 'done',
+                'total_tokens': total_tokens,
+                'message_id': ai_message.id
+            }
+            yield f"data: {json.dumps(completion_data)}\n\n"
+
+        except Exception as e:
+            # 发送错误信号
+            error_data = {
+                'type': 'error',
+                'error': f"AI聊天过程中出错: {str(e)}"
+            }
+            yield f"data: {json.dumps(error_data)}\n\n"
+
+            # 回滚数据库
+            db.session.rollback()
+
+    return Response(generate(), mimetype='text/plain', headers={
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Credentials': 'true'
+    })

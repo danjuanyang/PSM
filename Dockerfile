@@ -4,9 +4,10 @@ FROM python:3.9-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装系统依赖，用于编译部分 Python 库
+# 安装系统依赖，用于编译部分 Python 库，并安装 dos2unix
 RUN apt-get update && apt-get install -y \
     build-essential \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制依赖文件并安装
@@ -19,9 +20,10 @@ RUN pip install gunicorn
 # 复制所有应用代码到工作目录
 COPY . .
 
-# 复制并授权启动脚本
+# 复制并授权启动脚本，并修正换行符
 COPY entrypoint.sh .
 RUN chmod +x ./entrypoint.sh
+RUN dos2unix ./entrypoint.sh
 
 # 声明容器对外暴露的端口
 EXPOSE 3456
