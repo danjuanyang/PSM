@@ -9,7 +9,6 @@ from . import admin_bp
 from .. import db
 from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, Training, SystemConfig
 from ..decorators import permission_required, log_activity
-from ..backup.scheduler import backup_scheduler
 
 
 # --- 辅助函数 ---
@@ -300,11 +299,14 @@ def update_system_configs():
                     continue
                 
                 config_item.value = value
+            
+            # 如果配置项不存在, 且值不为空, 则创建新的记录
+            elif value:
+                # 注意：从前端新增的配置项没有 description，这是预期的行为。
+                # 重要的配置项应该通过 seed-configs 命令预先播种。
+                new_config = SystemConfig(key=key, value=value, description='由用户在前台添加')
+                db.session.add(new_config)
 
-                # 如果更新的是备份计划，则立即重新加载调度任务
-                if key == 'AUTOBACKUP_CRON_SCHEDULE':
-                    backup_scheduler.schedule_task(value)
-                
                 # --- 实时更新 app.config ---
                 # 尝试进行类型转换
                 if value.lower() in ['true', 'false']:

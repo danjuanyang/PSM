@@ -151,7 +151,7 @@ def create_app(config_name='default'):
     app.register_blueprint(analytics_bp)
     app.register_blueprint(email_bp, url_prefix='/email')
     app.register_blueprint(kb_bp, url_prefix='/kb')
-    app.register_blueprint(backup_bp, url_prefix='/backup')
+    app.register_blueprint(backup_bp)
     
     # e. 启动临时文件清理调度器
     from .files.cleanup_scheduler import cleanup_scheduler
@@ -168,8 +168,6 @@ def create_app(config_name='default'):
 
     # g. 启动备份任务调度器
     from .backup.scheduler import backup_scheduler
-    with app.app_context():
-        backup_scheduler.init_tasks()
 
     # f. Shell 上下文处理器 (可选，但推荐)
     @app.shell_context_processor

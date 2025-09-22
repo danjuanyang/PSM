@@ -17,8 +17,15 @@ class BackupScheduler:
     def __init__(self):
         self.scheduler = BackgroundScheduler()
         self.backup_service = BackupService()
+        self.scheduler.add_job(
+            func=self._reload_schedule_from_db,
+            trigger="interval",
+            minutes=5,
+            id="backup_schedule_reloader",
+            name="Backup Schedule Reloader"
+        )
         self.scheduler.start()
-        logger.info("Backup scheduler started")
+        logger.info("Backup scheduler started with periodic reloader.")
 
     def shutdown(self):
         """关闭调度器"""
@@ -26,51 +33,46 @@ class BackupScheduler:
             self.scheduler.shutdown()
             logger.info("Backup scheduler stopped")
 
-    def init_tasks(self):
-        """从数据库加载并初始化备份任务"""
-        try:
-            with current_app.app_context():
-                from sqlalchemy import inspect
-                inspector = inspect(db.engine)
-                if 'system_config' not in inspector.get_table_names():
-                    logger.info("SystemConfig table does not exist yet, skipping backup task initialization")
-                    return
-
+    def _reload_schedule_from_db(self):
+        """从数据库加载并初始化备份任务。此方法会由调度器周期性调用。"""
+        with current_app.app_context():
+            try:
                 cron_config = SystemConfig.query.filter_by(key='AUTOBACKUP_CRON_SCHEDULE').first()
-                if cron_config and cron_config.value:
-                    self.schedule_task(cron_config.value)
-                else:
-                    logger.info("No AUTOBACKUP_CRON_SCHEDULE found in SystemConfig, no backup task scheduled.")
-        except Exception as e:
-            logger.warning(f"Could not initialize backup tasks: {e}")
+                cron_expression = cron_config.value if (cron_config and cron_config.value) else None
+                self.schedule_backup_task(cron_expression)
+            except Exception as e:
+                logger.error(f"Could not reload backup schedule from DB: {e}", exc_info=True)
 
-    def schedule_task(self, cron_expression: str):
+    def schedule_backup_task(self, cron_expression: str):
         """
         根据Cron表达式调度备份任务
 
         Args:
-            cron_expression: Cron格式的调度字符串
+            cron_expression: Cron格式的调度字符串, 如果为None或空则移除任务
         """
         job_id = "system_backup_task"
-
-        if self.scheduler.get_job(job_id):
-            self.scheduler.remove_job(job_id)
+        existing_job = self.scheduler.get_job(job_id)
 
         if not cron_expression:
-            logger.info("Backup cron expression is empty, removing scheduled task.")
+            if existing_job:
+                self.scheduler.remove_job(job_id)
+                logger.info("Backup cron expression is empty, removed scheduled backup task.")
             return
 
         try:
             trigger = CronTrigger.from_crontab(cron_expression)
-            self.scheduler.add_job(
-                func=self._execute_backup_task,
-                trigger=trigger,
-                id=job_id,
-                name="System Automatic Backup",
-                replace_existing=True
-            )
-            job = self.scheduler.get_job(job_id)
-            logger.info(f"Scheduled system backup with cron: '{cron_expression}'. Next run at: {job.next_run_time}")
+            if existing_job:
+                existing_job.reschedule(trigger=trigger)
+                logger.info(f"Rescheduled system backup with new cron: '{cron_expression}'. Next run at: {existing_job.next_run_time}")
+            else:
+                job = self.scheduler.add_job(
+                    func=self._execute_backup_task,
+                    trigger=trigger,
+                    id=job_id,
+                    name="System Automatic Backup",
+                    replace_existing=True
+                )
+                logger.info(f"Scheduled system backup with cron: '{cron_expression}'. Next run at: {job.next_run_time}")
         except Exception as e:
             logger.error(f"Invalid cron expression '{cron_expression}': {e}")
 
