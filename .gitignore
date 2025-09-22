@@ -255,3 +255,4 @@
 /data/psm.db
 /data/新测试psm-dev.db
 /data/旧正式psm-old.db
+/migrations/versions/c699569659ae_add_file_merge_tasks_table.py

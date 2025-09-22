@@ -1,7 +1,7 @@
 # PSM/app/admin/routes.py
 import random
 import string
-from flask import request, jsonify, g
+from flask import request, jsonify, g, current_app
 from flask_bcrypt import generate_password_hash
 from flask_login import login_required, current_user
 
@@ -9,6 +9,7 @@ from . import admin_bp
 from .. import db
 from ..models import User, RoleEnum, Permission, UserPermission, RolePermission, Training, SystemConfig
 from ..decorators import permission_required, log_activity
+from ..backup.scheduler import backup_scheduler
 
 
 # --- 辅助函数 ---
@@ -299,6 +300,10 @@ def update_system_configs():
                     continue
                 
                 config_item.value = value
+
+                # 如果更新的是备份计划，则立即重新加载调度任务
+                if key == 'AUTOBACKUP_CRON_SCHEDULE':
+                    backup_scheduler.schedule_task(value)
                 
                 # --- 实时更新 app.config ---
                 # 尝试进行类型转换
@@ -315,4 +320,3 @@ def update_system_configs():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': '更新配置时出错', 'details': str(e)}), 500
-

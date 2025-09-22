@@ -12,8 +12,15 @@ services:
     volumes:
       # 将主机当前目录下的 data 文件夹挂载到容器的 /app/data 目录 (用于数据库)
       - ./data:/app/data
-      # 将主机当前目录下的 uploads 文件夹挂载到容器的 /uploads 目录 (用于文件上传)
-      - ./uploads:/uploads
+      # 将主机项目根目录下的 uploads 文件夹挂载到容器的 /uploads 目录 (用于文件上传)
+      - ../uploads:/uploads
+      # 将主机上完全独立的备份目录挂载到容器的 /backups 目录
+      - /volume/web/backup:/backups
+    # 设置环境变量, 让容器内的app知道数据应该读写到哪里
+    environment:
+      - UPLOAD_FOLDER=/uploads
+      - DATA_FOLDER=/app/data
+      - BACKUP_FOLDER=/backups
     # 设置容器总是自动重启
     restart: unless-stopped
     # 设置环境变量 (如果您的应用需要)

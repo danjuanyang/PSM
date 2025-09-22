@@ -46,6 +46,8 @@ def seed_configs():
         'MAIL_USERNAME': '邮件发件人用户名 (通常是邮箱地址)',
         'MAIL_PASSWORD': '邮件发件人密码',
         'MAIL_DEFAULT_SENDER': '默认发件人显示名称和地址 (e.g., "Your Name <user@example.com>")',
+        # --- Backup ---
+        'AUTOBACKUP_CRON_SCHEDULE': '自动备份的Cron表达式 (例如 "0 22 * * *" 表示每天22点)。留空表示禁用。',
     }
 
     with app.app_context():

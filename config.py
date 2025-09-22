@@ -28,15 +28,18 @@ class Config:
     SQLALCHEMY_ECHO = False  # 如果想在控制台看到SQL语句，可以设为 True
 
     # 文件存储配置
-    UPLOAD_FOLDER = os.path.join(basedir, '..', 'uploads/')
-    DATA_FOLDER = os.path.join(basedir, 'data/')
-    TEMP_DIR = os.path.join(basedir, '..', 'temp/')
+    # 优先从环境变量读取路径, 其次使用基于项目根目录的相对路径
+    UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER') or os.path.join(basedir, '..', 'uploads')
+    DATA_FOLDER = os.environ.get('DATA_FOLDER') or os.path.join(basedir, 'data')
+    BACKUP_FOLDER = os.environ.get('BACKUP_FOLDER') or os.path.join(basedir, '..', 'backups')
+    TEMP_DIR = os.path.join(basedir, '..', 'temp')
 
     @staticmethod
     def init_app(app):
-        # 确保上传和临时文件夹存在
+        # 确保上传、数据、备份和临时文件夹存在
         os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
         os.makedirs(app.config['DATA_FOLDER'], exist_ok=True)
+        os.makedirs(app.config['BACKUP_FOLDER'], exist_ok=True)
         os.makedirs(app.config['TEMP_DIR'], exist_ok=True)
 
 
