@@ -5,6 +5,7 @@ from . import db
 from .alerts.routes import generate_system_alerts_for_user
 from .models import Permission, RolePermission, RoleEnum, ProjectFile, FileContent, User
 from .files.routes import extract_text_from_file
+from .email.init_templates import init_email_templates
 
 # --- 定义应用所需的所有权限 ---
 # 格式：{'name': '权限名称', 'description': '权限描述'}
@@ -126,7 +127,15 @@ def register_commands(app):
         db.session.commit()
         click.echo('权限创建成功。')
 
-        # --- 2. 为角色分配默认权限 ---
+        # --- 2. 初始化邮件模板 ---
+        click.echo('\n正在初始化邮件模板...')
+        try:
+            init_email_templates()
+            click.echo('邮件模板初始化成功。')
+        except Exception as e:
+            click.echo(f'邮件模板初始化失败: {e}')
+
+        # --- 3. 为角色分配默认权限 ---
         click.echo('\n正在为角色分配默认权限...')
         for role, perm_names in ROLE_DEFAULT_PERMISSIONS.items():
             for perm_name in perm_names:
